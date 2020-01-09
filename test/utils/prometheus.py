@@ -143,7 +143,7 @@ class PrometheusInstance(object):
         with self._modify_config() as config:
             config['scrape_configs'] = [{
                 'job_name': job_name,
-                'scrape_interval': '1s',
+                'scrape_interval': '10s',
                 'static_configs': [{
                     'targets': static_targets
                 }]
