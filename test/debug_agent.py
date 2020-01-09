@@ -1,15 +1,36 @@
+# simple script to launch a single-node CCM cluster with the exporter agent installed, and the C* JVM
+# configured to start the remote debugger agent
+
 import argparse
 import os
 from pathlib import Path
 
+from ccmlib.cluster import Cluster
 from ccmlib.cluster_factory import ClusterFactory
 
-from utils.ccm import create_ccm_cluster
 from utils.jar_utils import ExporterJar
+
+
+def create_ccm_cluster(cluster_directory: Path, cassandra_version: str, node_count: int):
+    if cluster_directory.exists():
+        cluster_directory.rmdir()  # CCM wants to create this
+
+    print('Creating cluster...')
+    ccm_cluster = Cluster(
+        path=cluster_directory.parent,
+        name=cluster_directory.name,
+        version=cassandra_version,
+        create_directory=True  # if this is false, various config files wont be created...
+    )
+
+    ccm_cluster.populate(nodes=node_count)
+
+    return ccm_cluster
 
 
 def yesno_bool(b: bool):
     return ('n', 'y')[b]
+
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -21,7 +42,8 @@ if __name__ == '__main__':
     parser.add_argument('--jvm-debug-address', type=str, help="address/port for JVM debug agent to listen on", default='5005')
 
     parser.add_argument('--exporter-args', type=str, help="exporter agent arguments", default='-l:9500')
-    parser.add_argument('-j', '--exporter-jar', type=ExporterJar.from_path, help="location of the cassandra-exporter jar, either agent or standalone (default: %(default)s)", default=str(ExporterJar.default_jar_path()))
+
+    ExporterJar.add_jar_argument('--exporter-jar', parser)
 
     parser.set_defaults(jvm_debug_wait_attach=True)
 
@@ -43,7 +65,8 @@ if __name__ == '__main__':
     node = ccm_cluster.nodelist()[0]
     print(f'Configuring node {node.name}')
 
-    node.set_environment_variable('JVM_OPTS', f'-javaagent:{args.exporter_jar.path}={args.exporter_args} -agentlib:jdwp=transport=dt_socket,server=y,suspend={yesno_bool(args.jvm_debug_wait_attach)},address={args.jvm_debug_address}')
+    node.set_environment_variable('JVM_OPTS', f'-javaagent:{args.exporter_jar.path}={args.exporter_args} '
+                                              f'-agentlib:jdwp=transport=dt_socket,server=y,suspend={yesno_bool(args.jvm_debug_wait_attach)},address={args.jvm_debug_address}')
 
     print(f'JVM remote debugger listening on {args.jvm_debug_address}. JVM will suspend on start.')
     print('Starting single node cluster...')

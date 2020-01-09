@@ -2,20 +2,18 @@
 
 import argparse
 import contextlib
+import logging
 import os
 import tempfile
-import time
 import urllib.request
 from pathlib import Path
 
-import cassandra.cluster
-import cassandra.connection
-
-
 from utils.ccm import TestCluster
 from utils.jar_utils import ExporterJar
-from utils.path_utils import existing_file_arg
 from utils.schema import CqlSchema
+
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
 
 def cluster_directory(path):
@@ -41,8 +39,6 @@ def output_directory(path):
         # the empty directory check is done later, since it can be skipped with --overwrite-output
 
     return path
-
-
 
 
 if __name__ == '__main__':
@@ -75,37 +71,25 @@ if __name__ == '__main__':
     os.makedirs(args.output_directory, exist_ok=True)
 
     with contextlib.ExitStack() as defer:
+        logger.info('Setting up Cassandra cluster.')
         ccm_cluster = defer.push(TestCluster(
-            args.cluster_directory, args.cassandra_version
+            cluster_directory=args.cluster_directory,
+            cassandra_version=args.cassandra_version,
+            exporter_jar=args.exporter_jar,
+            nodes=args.nodes, racks=args.racks, datacenters=args.datacenters,
+            delete_cluster_on_stop=not args.keep_cluster_directory,
         ))
 
-        print('Starting cluster...')
+        logger.info('Starting cluster.')
         ccm_cluster.start()
 
-        print('Applying schema...')
-        ccm_cluster.apply_schema()
+        logger.info('Applying CQL schema.')
+        ccm_cluster.apply_schema(args.schema)
 
-        print('Connecting to cluster...')
-        contact_points = map(lambda n: cassandra.connection.DefaultEndPoint(*n.network_interfaces['binary']), ccm_cluster.nodelist())
-
-        cql_cluster = cassandra.cluster.Cluster(list(contact_points))
-        with cql_cluster.connect() as cql_session:
-            print('Applying schema...')
-            for stmt in args.schema:
-                print('Executing "{}"...'.format(stmt.split('\n')[0]))
-                cql_session.execute(stmt)
-
-        # the collector defers registrations by a second or two.
-        # See com.zegelin.cassandra.exporter.Harvester.defer()
-        print('Pausing to wait for deferred MBean registrations to complete...')
-        time.sleep(5)
-
-        print('Capturing metrics dump...')
+        logger.info('Capturing metrics dump.')
         for node in ccm_cluster.nodelist():
             url = f'http://{node.ip_addr}:{node.exporter_port}/metrics?x-accept=text/plain'
             destination = args.output_directory / f'{node.name}.txt'
             urllib.request.urlretrieve(url, destination)
 
-            print(f'Wrote {url} to {destination}')
-
-
+            logger.info(f'Wrote {url} to {destination}')

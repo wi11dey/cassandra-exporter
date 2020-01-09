@@ -8,38 +8,30 @@
 import argparse
 import contextlib
 import http.server
-import itertools
-import json
-import platform
+import logging
 import random
-import re
 import shutil
-import socketserver
-import subprocess
-import tarfile
+import sys
 import tempfile
-import threading
 import time
-import urllib.request
-import urllib.error
-from collections import namedtuple, defaultdict
+from collections import defaultdict
 from pathlib import Path
-from types import SimpleNamespace
 
-import cassandra.connection
 from frozendict import frozendict
 
-from utils.ccm import create_ccm_cluster, TestCluster
+from utils.ccm import TestCluster
 from utils.jar_utils import ExporterJar
 from utils.path_utils import nonexistent_or_empty_directory_arg
-
-import yaml
-
 from utils.prometheus import PrometheusInstance, PrometheusArchive
 from utils.schema import CqlSchema
 
+logging.basicConfig(level=logging.DEBUG)
+logger = logging.getLogger(__name__)
 
-class DummyPrometheusHTTPHandler(http.server.BaseHTTPRequestHandler):
+
+class TestMetricsHTTPHandler(http.server.BaseHTTPRequestHandler):
+    """A test HTTP endpoint for Prometheus to scrape."""
+
     def do_GET(self):
         if self.path != '/metrics':
             self.send_error(404)
@@ -47,7 +39,7 @@ class DummyPrometheusHTTPHandler(http.server.BaseHTTPRequestHandler):
         self.send_response(200)
         self.end_headers()
 
-        #if self.server.server_port == 9500:
+        # if self.server.server_port == 9500:
         if random.choice([True, False]):
             self.wfile.write(b'# TYPE test_family gauge\n'
                              b'test_family 123\n')
@@ -61,12 +53,17 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('cassandra_version', type=str, help="version of Cassandra to run", metavar="CASSANDRA_VERSION")
 
-    parser.add_argument('-C', '--working-directory', type=nonexistent_or_empty_directory_arg, help="location to install Cassandra and Prometheus. Must be empty or not exist. (default is a temporary directory)")
-    parser.add_argument('--keep-working-directory', help="don't delete the cluster directory on exit", action='store_true')
+    parser.add_argument('-C', '--working-directory', type=nonexistent_or_empty_directory_arg,
+                        help="location to install Cassandra and Prometheus. Must be empty or not exist. (default is a temporary directory)")
+    parser.add_argument('--keep-working-directory', help="don't delete the cluster directory on exit",
+                        action='store_true')
 
-    parser.add_argument('-d', '--datacenters', type=int, help="number of data centers (default: %(default)s)", default=2)
-    parser.add_argument('-r', '--racks', type=int, help="number of racks per data center (default: %(default)s)", default=3)
-    parser.add_argument('-n', '--nodes', type=int, help="number of nodes per data center rack (default: %(default)s)", default=3)
+    parser.add_argument('-d', '--datacenters', type=int, help="number of data centers (default: %(default)s)",
+                        default=2)
+    parser.add_argument('-r', '--racks', type=int, help="number of racks per data center (default: %(default)s)",
+                        default=3)
+    parser.add_argument('-n', '--nodes', type=int, help="number of nodes per data center rack (default: %(default)s)",
+                        default=3)
 
     ExporterJar.add_jar_argument('--exporter-jar', parser)
     CqlSchema.add_schema_argument('--schema', parser)
@@ -77,20 +74,22 @@ if __name__ == '__main__':
     if args.working_directory is None:
         args.working_directory = Path(tempfile.mkdtemp())
 
+
     def delete_working_dir():
         shutil.rmtree(args.working_directory)
+
 
     with contextlib.ExitStack() as defer:
         if not args.keep_working_directory:
             defer.callback(delete_working_dir)  # LIFO order -- this gets called last
 
-        print('Setting up Prometheus...')
+        logger.info('Setting up Prometheus.')
         prometheus = defer.push(PrometheusInstance(
             archive=args.prometheus_archive,
             working_directory=args.working_directory
         ))
 
-        print('Setting up Cassandra...')
+        logger.info('Setting up Cassandra cluster.')
         ccm_cluster = defer.push(TestCluster(
             cluster_directory=args.working_directory / 'test-cluster',
             cassandra_version=args.cassandra_version,
@@ -99,27 +98,22 @@ if __name__ == '__main__':
             delete_cluster_on_stop=not args.keep_working_directory,
         ))
 
-
         # httpd = http.server.HTTPServer(("", 9500), DummyPrometheusHTTPHandler)
         # threading.Thread(target=httpd.serve_forever, daemon=True).start()
         #
         # httpd = http.server.HTTPServer(("", 9501), DummyPrometheusHTTPHandler)
         # threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
-        prometheus.set_scrape_config('cassandra', list(map(lambda n: f'localhost:{n.exporter_port}', ccm_cluster.nodelist())))
+        prometheus.set_scrape_config('cassandra',
+                                     list(map(lambda n: f'localhost:{n.exporter_port}', ccm_cluster.nodelist())))
         # prometheus.set_scrape_config('cassandra', ['localhost:9500', 'localhost:9501'])
         prometheus.start()
 
-
-
-
-
-        print('Starting cluster...')
+        logger.info('Starting Cassandra cluster.')
         ccm_cluster.start()
 
-        print('Pausing to wait for deferred MBean registrations to complete...')
-        time.sleep(5)
-
+        logger.info('Applying CQL schema.')
+        ccm_cluster.apply_schema(args.schema)
 
         target_histories = defaultdict(dict)
 
@@ -144,15 +138,10 @@ if __name__ == '__main__':
 
             time.sleep(1)
 
-        x = dict((target, history) for target, history in target_histories.items()
-             if any([health != 'up' for (health, error) in history.values()]))
+        unhealthy_targets = dict((target, history) for target, history in target_histories.items()
+                                 if any([health != 'up' for (health, error) in history.values()]))
 
-        if len(x):
-            print(x)
-
-
-
-
-
-
-
+        if len(unhealthy_targets):
+            logger.error('One or more Prometheus scrape targets was unhealthy.')
+            logger.error(unhealthy_targets)
+            sys.exit(-1)

@@ -1,6 +1,7 @@
 import shutil
 import signal
 import subprocess
+import time
 from pathlib import Path
 from typing import List
 
@@ -9,8 +10,15 @@ from ccmlib.cluster import Cluster
 from utils.jar_utils import ExporterJar
 from utils.schema import CqlSchema
 
+import cassandra.cluster
+import cassandra.connection
+
+import logging
+
 
 class TestCluster(Cluster):
+    logger = logging.getLogger(f'{__name__}.{__qualname__}')
+
     standalone_processes: List[subprocess.Popen] = []
 
     def __init__(self, cluster_directory: Path, cassandra_version: str,
@@ -97,12 +105,18 @@ class TestCluster(Cluster):
         return result
 
     def apply_schema(self, schema: CqlSchema):
-        cql_cluster = cassandra.cluster.Cluster(list(contact_points))
-        with cql_cluster.connect() as cql_session:
-            print('Applying schema...')
-            for stmt in args.schema:
-                print('Executing "{}"...'.format(stmt.split('\n')[0]))
-                cql_session.execute(stmt)
+        contact_points = map(lambda n: cassandra.connection.DefaultEndPoint(*n.network_interfaces['binary']), self.nodelist())
+
+        with cassandra.cluster.Cluster(list(contact_points)) as cql_cluster:
+            with cql_cluster.connect() as cql_session:
+                for stmt in schema.statements:
+                    self.logger.debug('Executing CQL statement "{}".'.format(stmt.split('\n')[0]))
+                    cql_session.execute(stmt)
+
+        # the collector defers registrations by a second or two.
+        # See com.zegelin.cassandra.exporter.Harvester.defer()
+        self.logger.info('Pausing to wait for deferred MBean registrations to complete.')
+        time.sleep(5)
 
     def __enter__(self):
         return self
@@ -110,22 +124,4 @@ class TestCluster(Cluster):
     def __exit__(self, exc_type, exc_val, exc_tb):
         if self.stop_on_exit:
             self.stop()
-
-
-
-def create_ccm_cluster(cluster_directory: Path, cassandra_version: str, node_count: int):
-    if cluster_directory.exists():
-        cluster_directory.rmdir()  # CCM wants to create this
-
-    print('Creating cluster...')
-    ccm_cluster = Cluster(
-        path=cluster_directory.parent,
-        name=cluster_directory.name,
-        version=cassandra_version,
-        create_directory=True  # if this is false, various config files wont be created...
-    )
-
-    ccm_cluster.populate(nodes=node_count)
-
-    return ccm_cluster
 
