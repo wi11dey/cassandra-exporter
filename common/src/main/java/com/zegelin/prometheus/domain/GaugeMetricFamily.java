@@ -1,17 +1,21 @@
 package com.zegelin.prometheus.domain;
 
+import com.zegelin.prometheus.domain.source.Source;
+
+import javax.management.QueryExp;
 import java.util.List;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class GaugeMetricFamily extends MetricFamily<NumericMetric> {
-    public GaugeMetricFamily(final String name, final String help, final Stream<NumericMetric> metrics) {
-        this(name, help, () -> metrics);
+    public GaugeMetricFamily(final String name, final String help, Set<Source> sources, final Stream<NumericMetric> metrics) {
+        this(name, help, sources, () -> metrics);
     }
 
-    GaugeMetricFamily(final String name, final String help, final Supplier<Stream<NumericMetric>> metricsStreamSupplier) {
-        super(name, help, metricsStreamSupplier);
+    private GaugeMetricFamily(final String name, final String help, Set<Source> sources, final Supplier<Stream<NumericMetric>> metricsStreamSupplier) {
+        super(name, help, sources, metricsStreamSupplier);
     }
 
 
@@ -24,6 +28,6 @@ public class GaugeMetricFamily extends MetricFamily<NumericMetric> {
     public GaugeMetricFamily cachedCopy() {
         final List<NumericMetric> metrics = metrics().collect(Collectors.toList());
 
-        return new GaugeMetricFamily(name, help, metrics::stream);
+        return new GaugeMetricFamily(name, help, sources, metrics::stream);
     }
 }

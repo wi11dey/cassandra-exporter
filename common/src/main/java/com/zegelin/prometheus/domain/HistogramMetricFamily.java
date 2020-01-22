@@ -1,19 +1,21 @@
 package com.zegelin.prometheus.domain;
 
 import com.google.common.collect.ImmutableList;
+import com.zegelin.prometheus.domain.source.Source;
 
 import java.util.List;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class HistogramMetricFamily extends MetricFamily<HistogramMetricFamily.Histogram> {
-    public HistogramMetricFamily(final String name, final String help, final Stream<Histogram> metrics) {
-        this(name, help, () -> metrics);
+    public HistogramMetricFamily(final String name, final String help, Set<Source> sources, final Stream<Histogram> metrics) {
+        this(name, help, sources, () -> metrics);
     }
 
-    HistogramMetricFamily(final String name, final String help, final Supplier<Stream<Histogram>> metricsStreamSupplier) {
-        super(name, help, metricsStreamSupplier);
+    private HistogramMetricFamily(final String name, final String help, Set<Source> sources, final Supplier<Stream<Histogram>> metricsStreamSupplier) {
+        super(name, help, sources, metricsStreamSupplier);
     }
 
     @Override
@@ -25,7 +27,7 @@ public class HistogramMetricFamily extends MetricFamily<HistogramMetricFamily.Hi
     public HistogramMetricFamily cachedCopy() {
         final List<Histogram> metrics = metrics().collect(Collectors.toList());
 
-        return new HistogramMetricFamily(name, help, metrics::stream);
+        return new HistogramMetricFamily(name, help, sources, metrics::stream);
     }
 
     public static class Histogram extends Metric {
@@ -34,7 +36,7 @@ public class HistogramMetricFamily extends MetricFamily<HistogramMetricFamily.Hi
         public final Iterable<Interval> buckets;
 
         public Histogram(final Labels labels, final float sum, final float count, final Iterable<Interval> buckets) {
-            super(labels);
+            super(labels, source);
 
             this.sum = sum;
             this.count = count;

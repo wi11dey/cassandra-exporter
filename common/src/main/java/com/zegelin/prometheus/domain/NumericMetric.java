@@ -5,6 +5,7 @@ public class NumericMetric extends Metric {
 
     public NumericMetric(final Labels labels, final float value) {
         super(labels);
+
         this.value = value;
     }
 }

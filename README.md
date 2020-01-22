@@ -1,24 +1,26 @@
 # cassandra-exporter [![CircleCI](https://circleci.com/gh/instaclustr/cassandra-exporter.svg?style=svg)](https://circleci.com/gh/instaclustr/cassandra-exporter)
 
-*cassandra-exporter* is a Java agent (with optional standalone mode) that exports Cassandra metrics to [Prometheus](http://prometheus.io).
+*cassandra-exporter* is a Java agent that exports Cassandra metrics to [Prometheus](http://prometheus.io).
 
 *Project Status: beta*
 
-
 ## Introduction
 
-*cassandra-exporter* enables high performance collection of Cassandra metrics and follows the Prometheus best practices for metrics naming and labeling.
+*cassandra-exporter* enables high performance collection of Cassandra metrics.
+and follows the Prometheus best practices
+for metrics naming and labeling.
 
-![Benchamrk Results](doc/benchmark-results.png)
+![Benchmark Results](doc/benchmark-results.png)
 
-*cassandra-exporter* is fast. In a worst-case benchmark, where the Cassandra schema contains 1000+ tables (resulting in ~174 thousand metrics),
-*cassandra-exporter* completes exposition in ~140ms. Compared to the next-best, *jmx_exporter*, which completes exposition in _~8 seconds_.
+*cassandra-exporter* is _fast_. In a worst-case benchmark, where the Cassandra schema contained 1000 tables
+(resulting in ~174 thousand metrics), *cassandra-exporter* completes exposition in ~140ms.
+Compared to the next-best, *jmx_exporter*, which completes exposition in _~8 seconds_!
 Other solutions can take _tens of seconds_, during which CPU time is consumed querying JMX and serialising values.
 
 See the [Exported Metrics](https://github.com/instaclustr/cassandra-exporter/wiki/Exported-Metrics) wiki page for a list of available metrics.
 
 All but a few select metrics exposed by *cassandra-exporter* are live with no caching involved.
-The few that are cached are done so for performance reasons.
+The few that are cached are done so for performance reasons -- e.g., they hit the filesystem.
 
 
 
@@ -59,21 +61,21 @@ Prometheus metrics will now be available at <http://localhost:9500/metrics>.
 
 ### Standalone
 
-While it is preferable to run *cassandra-exporter* as a Java agent for performance, it can instead be run as an external application if required.
+While it is preferable to run *cassandra-exporter* as a Java agent for performance, it can instead be run as an external
+application if required.
 
-Download the [latest release](https://github.com/instaclustr/cassandra-exporter/releases/latest) and copy `cassandra-exporter-standalone-<version>.jar` to a location of your choosing.
+Download the [latest release](https://github.com/instaclustr/cassandra-exporter/releases/latest) and copy
+`cassandra-exporter-standalone-<version>.jar` to a location of your choosing.
 
 The exporter can be started via `java -jar /path/to/cassandra-exporter-standalone-<version>.jar`.
 
 Prometheus metrics will now be available at <http://localhost:9500/metrics>.
 
-In this mode metrics will be queried via JMX which will incur a performance overhead.
+In this mode, metrics will be queried via JMX which does incur a performance overhead.
 The standalone mode was originally designed to assist with benchmarking and development of the exporter.
 
-The set of metrics available is close to that of the agent -- Gossiper related metrics are unavailable as these aren't readily available over JMX.
-
-Currently some additional metadata labels, such as the table type (table, index, view, etc) attached to the `cassandra_table_*` metrics, are
-not available (this feature has yet to be written).
+The set of metric families, and attached labels, does differ slightly between the agent and standalone versions. This
+is due to some metrics not being available over JMX.
 
 
 ### Prometheus Configuration
@@ -89,7 +91,7 @@ Configure Prometheus to scrape the endpoint by adding the following to `promethe
 
 See the [Prometheus documentation](https://prometheus.io/docs/prometheus/latest/configuration/configuration/#%3Cscrape_config%3E) for more details on configuring scrape targets.
 
-To view the raw, plain text metrics (in the Prometheus text exposition format), request the endpoint
+To view the raw, Prometheus format text metrics (in the Prometheus text exposition format), request the endpoint
 (by default, <http://localhost:9500/metrics>) with a HTTP client such as a browser or cURL.
 
 Experimental JSON output is also provided if the `Accept: application/json` header or `?x-accept=application/json` URL parameter is specified.
@@ -192,6 +194,14 @@ The available command line options may be seen by passing `-h`/`--help`:
       -V, --version             Print version information and exit.
 
 
+Note that `--jmx-service-url`, `--jmx-user`, `--jmx-password`, `--cql-address`, `--cql-user` and `--cql-password`
+are only applicable to the standalone version. The agent does not use JMX or CQL connections.
+
+When run as an agent, command line options must be provided as part of the `-javaagent` JVM flag.
+An equals sign (`=`) separates the JAR path and the agent options. Multiple options, and option arguments can be
+separated by commas (`,`) or spaces. Commas are preferred as the whitespace escaping rules of `cassandra-env.sh` are
+quite complex to get correct. Options with values containing whitespace must be quoted appropriately.
+Alternatively use an `@`-file (see below) to avoid escaping whitespace.
 
 Options may also be provided via an `@`-file:
     
@@ -203,16 +213,11 @@ Options may also be provided via an `@`-file:
 
       JVM_OPTS="$JVM_OPTS -javaagent:$CASSANDRA_HOME/lib/cassandra-exporter-agent-<version>.jar=@/path/to/options/file"
       
-    `@$CASSANDRA_CONF/cassandra-exporter.options` is a good choice.
+`@$CASSANDRA_CONF/cassandra-exporter.options` is a good choice.
 
-Note that `--jmx-service-url`, `--jmx-user`, `--jmx-password`, `--cql-address`, `--cql-user` and `--cql-password`
-are only applicable to the standalone version -- the agent does not use JMX or CQL connections.
+To protect the CQL and JMX password and prevent it from showing up in `ps`, `top` and other utilities, use an `@`-file
+that contains `--jmx-password=PASSWORD` and/or `--cql-password=PASSWORD`.
 
-To protect the JMX password and prevent it from showing up in `ps`, `top` and other utilities, use an `@`-file that contains `--jmx-password=PASSWORD`.
-
-When run as an agent, command line options must be provided as part of the `-javaagent` flag, with an equals sign (`=`) separating the JAR path and the agent options.
-Multiple options, or option arguments can be separated by commas (`,`) or spaces. Commas are preferred as the whitespace quoting rules of `cassandra-env.sh` are quite complex.
-Options with values containing whitespace must be quoted appropriately. Alternatively use an `@`-file (see above).
 
 For example, to change the agent listening port to 1234 and exclude some metrics:
 
@@ -239,11 +244,23 @@ For example, to change the agent listening port to 1234 and exclude some metrics
     - `help=true|false` -- include/exclude per-metric family help in the output. Overrides `--family-help` CLI option. See above for more details.
 
 
+## Method of Operation
+
+For the Java agent version, *cassandra-exporter* hooks into the MBean registration process by installing a
+`MBeanServerInterceptor`. For every MBean registered with the `MBeanServer`, the interceptor receives the original
+`Object` (not a proxy) and the MBean `ObjectName` under which it is to be registered.
+
+*cassandra-exporter* checks a list of registered factories  matches the given `ObjectName` against 
+
+ 
+
 ## Features
 
 ### Performance
 
-JMX is *slow*, really slow. JMX adds significant overhead to every method invocation on exported MBean methods, even when those methods are called from within the same JVM.
+JMX is *slow*, really slow. JMX adds significant overhead to every method invocation on exported MBean methods, even
+when those methods are called from within the same JVM. 
+
 On a 300-ish table Cassandra node, trying to collect all exposed metrics via JVM resulted in a collection time that was upwards of 2-3 *seconds*.
 For exporters that run as a separate process there is additional overhead of inter-process communications and that time can reach the 10's of seconds.
 

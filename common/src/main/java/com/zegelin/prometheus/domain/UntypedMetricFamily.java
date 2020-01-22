@@ -1,18 +1,22 @@
 package com.zegelin.prometheus.domain;
 
+import com.zegelin.prometheus.domain.source.Source;
+
+import javax.management.QueryExp;
 import java.util.List;
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 public class UntypedMetricFamily extends MetricFamily<UntypedMetricFamily.Untyped> {
-    public UntypedMetricFamily(final String name, final String help, final Stream<Untyped> metrics) {
-        this(name, help, () -> metrics);
+    public UntypedMetricFamily(final String name, final String help, Set<Source> sources, final Stream<Untyped> metrics) {
+        this(name, help, sources, () -> metrics);
     }
 
-    UntypedMetricFamily(final String name, final String help, final Supplier<Stream<Untyped>> metricsStreamSupplier) {
-        super(name, help, metricsStreamSupplier);
+    private UntypedMetricFamily(final String name, final String help, Set<Source> sources, final Supplier<Stream<Untyped>> metricsStreamSupplier) {
+        super(name, help, sources, metricsStreamSupplier);
     }
 
     @Override
@@ -24,7 +28,7 @@ public class UntypedMetricFamily extends MetricFamily<UntypedMetricFamily.Untype
     public MetricFamily<Untyped> cachedCopy() {
         final List<Untyped> metrics = metrics().collect(Collectors.toList());
 
-        return new UntypedMetricFamily(name, help, metrics::stream);
+        return new UntypedMetricFamily(name, help, sources, metrics::stream);
     }
 
     public static class Untyped extends NumericMetric {

@@ -1,19 +1,25 @@
 package com.zegelin.prometheus.domain;
 
 import com.google.common.base.MoreObjects;
+import com.google.common.collect.ImmutableSet;
+import com.zegelin.prometheus.domain.source.Source;
 
 import java.util.Objects;
+import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
 
 public abstract class MetricFamily<T extends Metric> {
-    public final String name, help;
+    public final String name;
+    public final String help;
+    public final Set<Source> sources;
 
     private Supplier<Stream<T>> metricsStreamSupplier;
 
-    public MetricFamily(final String name, final String help, final Supplier<Stream<T>> metricsStreamSupplier) {
+    public MetricFamily(final String name, final String help, final Set<Source> sources, final Supplier<Stream<T>> metricsStreamSupplier) {
         this.name = name;
         this.help = help;
+        this.sources = sources == null ? ImmutableSet.of() : ImmutableSet.copyOf(sources);
         this.metricsStreamSupplier = metricsStreamSupplier;
     }
 
@@ -44,6 +50,7 @@ public abstract class MetricFamily<T extends Metric> {
         return MoreObjects.toStringHelper(this)
                 .add("name", name)
                 .add("help", help)
+                .add("sources", sources)
                 .toString();
     }
 }

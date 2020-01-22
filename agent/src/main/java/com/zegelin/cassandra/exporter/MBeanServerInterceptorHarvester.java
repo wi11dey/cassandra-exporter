@@ -4,9 +4,11 @@ import com.sun.jmx.mbeanserver.JmxMBeanServer;
 import com.zegelin.cassandra.exporter.collector.InternalGossiperMBeanMetricFamilyCollector;
 import com.zegelin.jmx.DelegatingMBeanServerInterceptor;
 import com.zegelin.cassandra.exporter.cli.HarvesterOptions;
+import com.zegelin.jmx.NamedObject;
 
 import javax.management.*;
 import java.lang.management.ManagementFactory;
+import java.lang.management.PlatformManagedObject;
 
 class MBeanServerInterceptorHarvester extends Harvester {
     class MBeanServerInterceptor extends DelegatingMBeanServerInterceptor {
@@ -15,14 +17,19 @@ class MBeanServerInterceptorHarvester extends Harvester {
         }
 
         @Override
-        public ObjectInstance registerMBean(final Object object, ObjectName name) throws InstanceAlreadyExistsException, MBeanRegistrationException, NotCompliantMBeanException {
+        public ObjectInstance registerMBean(final Object object, final ObjectName name) throws InstanceAlreadyExistsException, MBeanRegistrationException, NotCompliantMBeanException {
             // delegate first so that any exceptions (such as InstanceAlreadyExistsException) will throw first before additional processing occurs.
             final ObjectInstance objectInstance = super.registerMBean(object, name);
 
-            // a MBean can provide its own name upon registration
-            name = objectInstance.getObjectName();
+            final String interfaceClassName;
+            try {
+                interfaceClassName = (String) this.getMBeanInfo(objectInstance.getObjectName()).getDescriptor().getFieldValue(JMX.INTERFACE_CLASS_NAME_FIELD);
 
-            MBeanServerInterceptorHarvester.this.registerMBean(object, name);
+            } catch (final InstanceNotFoundException | IntrospectionException | ReflectionException e) {
+                throw new MBeanRegistrationException(e);
+            }
+
+            MBeanServerInterceptorHarvester.this.registerMBean(new NamedObject<>(objectInstance.getObjectName(), object, interfaceClassName));
 
             return objectInstance;
         }
@@ -57,10 +64,12 @@ class MBeanServerInterceptorHarvester extends Harvester {
         // the platform MXBeans get registered right at JVM startup, before the agent gets a chance to
         // install the interceptor.
         // instead, directly register the MXBeans here...
-        ManagementFactory.getPlatformManagementInterfaces().stream()
-                .flatMap(i -> ManagementFactory.getPlatformMXBeans(i).stream())
-                .distinct()
-                .forEach(mxBean -> registerMBean(mxBean, mxBean.getObjectName()));
+
+        for (final Class<? extends PlatformManagedObject> iface: ManagementFactory.getPlatformManagementInterfaces()) {
+            for (final PlatformManagedObject platformMXBean : ManagementFactory.getPlatformMXBeans(iface)) {
+                registerMBean(new NamedObject<>(platformMXBean.getObjectName(), platformMXBean, iface.getName()));
+            }
+        }
     }
 
     private void installMBeanServerInterceptor() {

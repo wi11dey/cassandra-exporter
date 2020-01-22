@@ -4,6 +4,7 @@ import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Sets;
 import com.zegelin.cassandra.exporter.cli.HarvesterOptions;
 import com.zegelin.cassandra.exporter.collector.RemoteGossiperMBeanMetricFamilyCollector;
+import com.zegelin.jmx.NamedObject;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
@@ -79,7 +80,7 @@ public class JMXHarvester extends Harvester {
 
                     logger.debug("Registering MBean/MXBean {}.", instance);
 
-                    final boolean isMXBean = Boolean.valueOf((String) mBeanDescriptor.getFieldValue(JMX.MXBEAN_FIELD));
+                    final boolean isMXBean = Boolean.parseBoolean((String) mBeanDescriptor.getFieldValue(JMX.MXBEAN_FIELD));
 
                     final ObjectName objectName = instance.getObjectName();
                     final Object mBeanProxy;
@@ -89,7 +90,7 @@ public class JMXHarvester extends Harvester {
                         mBeanProxy = JMX.newMBeanProxy(mBeanServerConnection, objectName, interfaceClass);
                     }
 
-                    registerMBean(mBeanProxy, objectName);
+                    registerMBean(new NamedObject<>(objectName, mBeanProxy, interfaceClassName));
                 }
             }
 

@@ -1,7 +1,10 @@
 package com.zegelin.cassandra.exporter.collector;
 
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.google.common.collect.Iterables;
+import com.zegelin.cassandra.exporter.collector.util.LabeledObjects;
+import com.zegelin.cassandra.exporter.collector.util.Sources;
 import com.zegelin.jmx.NamedObject;
 import com.zegelin.cassandra.exporter.MBeanGroupMetricFamilyCollector;
 import com.zegelin.cassandra.exporter.MetricValueConversionFunctions;
@@ -10,24 +13,30 @@ import com.zegelin.prometheus.domain.Interval;
 import com.zegelin.prometheus.domain.Labels;
 import com.zegelin.prometheus.domain.MetricFamily;
 import com.zegelin.prometheus.domain.SummaryMetricFamily;
+import com.zegelin.prometheus.domain.source.Source;
 import org.apache.cassandra.metrics.CassandraMetricsRegistry.JmxCounterMBean;
 import org.apache.cassandra.metrics.CassandraMetricsRegistry.JmxTimerMBean;
 
 import javax.management.ObjectName;
+import javax.management.QueryExp;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 import java.util.stream.Stream;
 
 import static com.zegelin.cassandra.exporter.CassandraMetricsUtilities.jmxTimerMBeanAsSamplingCounting;
 import static com.zegelin.cassandra.exporter.MetricValueConversionFunctions.microsecondsToSeconds;
 
 /*
-    Certain latency metrics in Cassandra are exposed via two separate MBeans -- a `Latency` bean
-    and a `TotalLatency` bean.
+    Certain latency metrics in Cassandra are exposed via two separate MBeans:
+    a `Latency` Timer MBean and a `TotalLatency` Counter MBean.
 
     Currently this assumes that these metrics are always in microseconds.
 
     This collector combines both into a single Prometheus Summary metric.
+    The summary `count` and `quantile`s are extracted from the timer, and the `sum`
+    is extracted from the counter.
  */
 public class LatencyMetricGroupSummaryCollector extends MBeanGroupMetricFamilyCollector {
     static class LatencyMetricGroup {
@@ -73,21 +82,23 @@ public class LatencyMetricGroupSummaryCollector extends MBeanGroupMetricFamilyCo
     private final String name;
     private final String help;
     private final Map<Labels, LatencyMetricGroup> latencyMetricGroups;
+    private final Set<Source> sources;
 
-    private LatencyMetricGroupSummaryCollector(final String name, final String help, final Map<Labels, LatencyMetricGroup> latencyMetricGroups) {
+    private LatencyMetricGroupSummaryCollector(final String name, final String help, final Map<Labels, LatencyMetricGroup> latencyMetricGroups, final Set<Source> sources) {
         this.name = name;
         this.help = help;
         this.latencyMetricGroups = ImmutableMap.copyOf(latencyMetricGroups);
+        this.sources = ImmutableSet.copyOf(sources);
     }
 
 
-    public static LatencyMetricGroupSummaryCollector collectorForMBean(final String name, final String help, final Labels labels, final NamedObject<?> mBean) {
+    public static LatencyMetricGroupSummaryCollector collectorForMBean(final String name, final Source source, final String help, final Labels labels, final NamedObject<?> mBean) {
         final NamedObject<SamplingCounting> timer = (mBean.object instanceof JmxTimerMBean) ? jmxTimerMBeanAsSamplingCounting(mBean) : null;
         final NamedObject<JmxCounterMBean> counter = mBean.map((n, o) -> (o instanceof JmxCounterMBean) ? (JmxCounterMBean) o : null);
 
         final LatencyMetricGroup latencyMetricGroup = new LatencyMetricGroup(timer, counter);
 
-        return new LatencyMetricGroupSummaryCollector(name, help, ImmutableMap.of(labels, latencyMetricGroup));
+        return new LatencyMetricGroupSummaryCollector(name, help, ImmutableMap.of(labels, latencyMetricGroup), ImmutableSet.of(source));
     }
 
     @Override
@@ -103,12 +114,10 @@ public class LatencyMetricGroupSummaryCollector extends MBeanGroupMetricFamilyCo
 
         final LatencyMetricGroupSummaryCollector other = (LatencyMetricGroupSummaryCollector) rawOther;
 
-        final HashMap<Labels, LatencyMetricGroup> newLatencyMetricGroups = new HashMap<>(latencyMetricGroups);
-        for (final Map.Entry<Labels, LatencyMetricGroup> group : other.latencyMetricGroups.entrySet()) {
-            newLatencyMetricGroups.merge(group.getKey(), group.getValue(), LatencyMetricGroup::merge);
-        }
-
-        return new LatencyMetricGroupSummaryCollector(name, help, newLatencyMetricGroups);
+        return new LatencyMetricGroupSummaryCollector(name, help,
+                LabeledObjects.merge(latencyMetricGroups, other.latencyMetricGroups, LatencyMetricGroup::merge),
+                Sources.merge(sources, other.sources)
+        );
     }
 
     @Override
@@ -129,7 +138,7 @@ public class LatencyMetricGroupSummaryCollector extends MBeanGroupMetricFamilyCo
             return null;
         }
 
-        return new LatencyMetricGroupSummaryCollector(name, help, newLatencyMetricGroups);
+        return new LatencyMetricGroupSummaryCollector(name, help, newLatencyMetricGroups, sources);
     }
 
     @Override
@@ -152,6 +161,6 @@ public class LatencyMetricGroupSummaryCollector extends MBeanGroupMetricFamilyCo
                 });
 
 
-        return Stream.of(new SummaryMetricFamily(this.name, this.help, summaryStream));
+        return Stream.of(new SummaryMetricFamily(name, help, sources, summaryStream));
     }
 }

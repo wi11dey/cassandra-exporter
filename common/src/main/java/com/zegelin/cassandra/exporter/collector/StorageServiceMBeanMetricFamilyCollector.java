@@ -88,7 +88,7 @@ public class StorageServiceMBeanMetricFamilyCollector extends MBeanGroupMetricFa
                     })
                     .map(e -> new NumericMetric(metadataFactory.endpointLabels(e.endpoint), e.ownership));
 
-            metricFamilyStreamBuilder.add(new GaugeMetricFamily("cassandra_token_ownership_ratio", null, ownershipMetricStream));
+            metricFamilyStreamBuilder.add(new GaugeMetricFamily("cassandra_token_ownership_ratio", null, null, ownershipMetricStream));
         }
 
         {
@@ -116,7 +116,7 @@ public class StorageServiceMBeanMetricFamilyCollector extends MBeanGroupMetricFa
                         }
                     });
 
-            metricFamilyStreamBuilder.add(new GaugeMetricFamily("cassandra_keyspace_effective_ownership_ratio", null, ownershipMetricStream));
+            metricFamilyStreamBuilder.add(new GaugeMetricFamily("cassandra_keyspace_effective_ownership_ratio", null, null, ownershipMetricStream));
         }
 
         // file store metrics
@@ -139,9 +139,9 @@ public class StorageServiceMBeanMetricFamilyCollector extends MBeanGroupMetricFa
                 }
             }
 
-            metricFamilyStreamBuilder.add(new GaugeMetricFamily("cassandra_storage_filesystem_bytes_total", null, fileStoreTotalSpaceMetrics.build()));
-            metricFamilyStreamBuilder.add(new GaugeMetricFamily("cassandra_storage_filesystem_usable_bytes", null, fileStoreUsableSpaceMetrics.build()));
-            metricFamilyStreamBuilder.add(new GaugeMetricFamily("cassandra_storage_filesystem_unallocated_bytes", null, fileStoreUnallocatedSpaceMetrics.build()));
+            metricFamilyStreamBuilder.add(new GaugeMetricFamily("cassandra_storage_filesystem_bytes_total", null, null, fileStoreTotalSpaceMetrics.build()));
+            metricFamilyStreamBuilder.add(new GaugeMetricFamily("cassandra_storage_filesystem_usable_bytes", null, null, fileStoreUsableSpaceMetrics.build()));
+            metricFamilyStreamBuilder.add(new GaugeMetricFamily("cassandra_storage_filesystem_unallocated_bytes", null, null, fileStoreUnallocatedSpaceMetrics.build()));
         }
 
         return metricFamilyStreamBuilder.build();

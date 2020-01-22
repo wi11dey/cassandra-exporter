@@ -4,6 +4,10 @@ import com.google.common.base.Stopwatch;
 import com.google.common.escape.CharEscaperBuilder;
 import com.google.common.escape.Escaper;
 import com.zegelin.prometheus.domain.*;
+import com.zegelin.prometheus.domain.source.MBeanAttributeSource;
+import com.zegelin.prometheus.domain.source.MBeanQuerySource;
+import com.zegelin.prometheus.domain.source.Source;
+import com.zegelin.prometheus.domain.source.SourceVisitor;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.Unpooled;
 import io.netty.channel.ChannelHandlerContext;
@@ -12,6 +16,7 @@ import io.netty.handler.stream.ChunkedInput;
 import java.time.Instant;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.TimeUnit;
 import java.util.function.BiConsumer;
 import java.util.function.Consumer;
@@ -114,7 +119,7 @@ public class JsonFormatChunkedInput implements ChunkedInput<ByteBuf> {
         private final Function<ByteBuf, Boolean> metricWriter;
 
         class HeaderVisitor implements MetricFamilyVisitor<Consumer<ByteBuf>> {
-            private void writeFamilyHeader(final MetricFamily<?> metricFamily, final ByteBuf buffer, final MetricFamilyType type) {
+            private void writeFamilyHeader(final ByteBuf buffer, final MetricFamily<?> metricFamily, final MetricFamilyType type) {
                 writeObjectKey(buffer, metricFamily.name);
 
                 JsonToken.OBJECT_START.write(buffer);
@@ -122,46 +127,102 @@ public class JsonFormatChunkedInput implements ChunkedInput<ByteBuf> {
                 writeObjectKey(buffer, "type");
                 type.write(buffer);
 
-                if (includeHelp && metricFamily.help != null) {
-                    JsonToken.COMMA.write(buffer);
+                JsonToken.COMMA.write(buffer);
 
+                if (includeHelp && metricFamily.help != null) {
                     writeObjectKey(buffer, "help");
                     writeUtf8String(buffer, JSON_STRING_ESCAPER.escape(metricFamily.help));
+
+                    JsonToken.COMMA.write(buffer);
                 }
 
-                JsonToken.COMMA.write(buffer);
+                if (includeHelp) {
+                    writeSourceInformation(buffer, metricFamily.sources);
+
+                    JsonToken.COMMA.write(buffer);
+                }
 
                 writeObjectKey(buffer, "metrics");
                 JsonToken.ARRAY_START.write(buffer);
             }
 
-            private Consumer<ByteBuf> forType(final MetricFamily<?> metricFamily, final MetricFamilyType type) {
-                return (buffer) -> writeFamilyHeader(metricFamily, buffer, type);
+            private void writeSourceInformation(final ByteBuf buffer, final Set<Source> sources) {
+                writeObjectKey(buffer, "sources");
+                JsonToken.ARRAY_START.write(buffer);
+
+                final Iterator<Source> sourcesIterator = sources.iterator();
+
+                while (sourcesIterator.hasNext()) {
+                    final Source source = sourcesIterator.next();
+
+                    JsonToken.OBJECT_START.write(buffer);
+
+                    writeObjectKey(buffer, "type");
+
+                    source.visit(new SourceVisitor() {
+                        @Override
+                        public void visit(final MBeanQuerySource source) {
+                            writeAsciiString(buffer, "MBeanQuery");
+
+                            JsonToken.COMMA.write(buffer);
+
+                            writeObjectKey(buffer, "query");
+                            writeUtf8String(buffer, source.mBeanQuery.toString());
+
+                            JsonToken.COMMA.write(buffer);
+
+                            writeObjectKey(buffer, "labels");
+                            buffer.writeBytes(source.staticLabels.asJSONFormatUTF8EncodedByteBuf().slice());
+
+                            JsonToken.COMMA.write(buffer);
+
+                            writeObjectKey(buffer, "class");
+                            writeUtf8String(buffer, source.mBeanClassName);
+                        }
+
+                        @Override
+                        public void visit(final MBeanAttributeSource mBeanQuerySource) {
+
+                        }
+                    });
+
+                    JsonToken.OBJECT_END.write(buffer);
+
+                    if (sourcesIterator.hasNext()) {
+                        JsonToken.COMMA.write(buffer);
+                    }
+                }
+
+                JsonToken.ARRAY_END.write(buffer);
+            }
+
+            private Consumer<ByteBuf> consumerForType(final MetricFamily<?> metricFamily, final MetricFamilyType type) {
+                return (buffer) -> writeFamilyHeader(buffer, metricFamily, type);
             }
 
             @Override
             public Consumer<ByteBuf> visit(final CounterMetricFamily metricFamily) {
-                return forType(metricFamily, MetricFamilyType.COUNTER);
+                return consumerForType(metricFamily, MetricFamilyType.COUNTER);
             }
 
             @Override
             public Consumer<ByteBuf> visit(final GaugeMetricFamily metricFamily) {
-                return forType(metricFamily, MetricFamilyType.GAUGE);
+                return consumerForType(metricFamily, MetricFamilyType.GAUGE);
             }
 
             @Override
             public Consumer<ByteBuf> visit(final SummaryMetricFamily metricFamily) {
-                return forType(metricFamily, MetricFamilyType.SUMMARY);
+                return consumerForType(metricFamily, MetricFamilyType.SUMMARY);
             }
 
             @Override
             public Consumer<ByteBuf> visit(final HistogramMetricFamily metricFamily) {
-                return forType(metricFamily, MetricFamilyType.HISTOGRAM);
+                return consumerForType(metricFamily, MetricFamilyType.HISTOGRAM);
             }
 
             @Override
             public Consumer<ByteBuf> visit(final UntypedMetricFamily metricFamily) {
-                return forType(metricFamily, MetricFamilyType.UNTYPED);
+                return consumerForType(metricFamily, MetricFamilyType.UNTYPED);
             }
         }
 

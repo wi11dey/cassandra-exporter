@@ -2,6 +2,7 @@ package com.zegelin.cassandra.exporter;
 
 import com.google.common.collect.ImmutableList;
 import com.google.common.collect.ImmutableMap;
+import com.google.common.collect.ImmutableSet;
 import com.zegelin.jmx.NamedObject;
 import com.zegelin.cassandra.exporter.MBeanGroupMetricFamilyCollector.Factory;
 import com.zegelin.cassandra.exporter.cli.HarvesterOptions;
@@ -11,7 +12,10 @@ import com.zegelin.cassandra.exporter.collector.LatencyMetricGroupSummaryCollect
 import com.zegelin.cassandra.exporter.collector.StorageServiceMBeanMetricFamilyCollector;
 import com.zegelin.cassandra.exporter.collector.dynamic.FunctionalMetricFamilyCollector;
 import com.zegelin.cassandra.exporter.collector.jvm.*;
+import com.zegelin.jmx.ObjectNames;
 import com.zegelin.prometheus.domain.Labels;
+import com.zegelin.prometheus.domain.source.MBeanQuerySource;
+import com.zegelin.prometheus.domain.source.Source;
 
 import javax.management.*;
 import java.util.*;
@@ -21,7 +25,6 @@ import java.util.function.Supplier;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
-import static com.zegelin.jmx.ObjectNames.format;
 import static com.zegelin.cassandra.exporter.CollectorFunctions.*;
 
 @SuppressWarnings("SameParameterValue")
@@ -31,10 +34,11 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
      */
     private static class FactoryBuilder {
         private final CollectorConstructor collectorConstructor;
-        private final QueryExp objectNameQuery;
+        private final QueryExp mBeanQuery;
         private final String metricFamilyName;
 
         private String help;
+        private Map<String, String> staticLabels = ImmutableMap.of();
 
         @FunctionalInterface
         interface Modifier {
@@ -48,9 +52,9 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
 
         private final List<Modifier> modifiers = new LinkedList<>();
 
-        FactoryBuilder(final CollectorConstructor collectorConstructor, final QueryExp objectNameQuery, final String metricFamilyName) {
+        FactoryBuilder(final CollectorConstructor collectorConstructor, final QueryExp mBeanQuery, final String metricFamilyName) {
             this.collectorConstructor = collectorConstructor;
-            this.objectNameQuery = objectNameQuery;
+            this.mBeanQuery = mBeanQuery;
             this.metricFamilyName = metricFamilyName;
         }
 
@@ -74,10 +78,16 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
             return this;
         }
 
+        FactoryBuilder withStaticLabels(final Map<String, String> staticLabels) {
+            this.staticLabels = staticLabels;
+
+            return this;
+        }
+
         Factory build() {
             return mBean -> {
                 try {
-                    if (!objectNameQuery.apply(mBean.name))
+                    if (!mBeanQuery.apply(mBean.name))
                         return null;
                 } catch (final BadStringOperationException | BadBinaryOpValueExpException | BadAttributeValueExpException | InvalidApplicationException e) {
                     throw new IllegalStateException("Failed to apply object name query to object name.", e);
@@ -85,7 +95,8 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
 
                 final Map<String, String> keyPropertyList = mBean.name.getKeyPropertyList();
 
-                final Map<String, String> rawLabels = new HashMap<>();
+                final Map<String, String> rawLabels = new HashMap<>(staticLabels);
+
                 {
                     for (final Modifier modifier : modifiers) {
                         if (!modifier.modify(keyPropertyList, rawLabels)) {
@@ -96,13 +107,15 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
 
                 final String name = String.format("cassandra_%s", metricFamilyName);
 
-                return collectorConstructor.groupCollectorForMBean(name, help, new Labels(rawLabels), mBean);
+                final MBeanQuerySource source = new MBeanQuerySource(mBeanQuery, new Labels(staticLabels), mBean.interfaceClassName);
+
+                return collectorConstructor.groupCollectorForMBean(name, source, help, new Labels(rawLabels), mBean);
             };
         }
 
         @FunctionalInterface
         public interface CollectorConstructor {
-            MBeanGroupMetricFamilyCollector groupCollectorForMBean(final String name, final String help, final Labels labels, final NamedObject<?> mBean);
+            MBeanGroupMetricFamilyCollector groupCollectorForMBean(final String name, final Source source, final String help, final Labels labels, final NamedObject<?> mBean);
         }
     }
 
@@ -112,7 +125,7 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
     private final Set<String> excludedKeyspaces;
 
 
-    public FactoriesSupplier(final MetadataFactory metadataFactory, final HarvesterOptions options) {
+    FactoriesSupplier(final MetadataFactory metadataFactory, final HarvesterOptions options) {
         this.metadataFactory = metadataFactory;
         this.perThreadTimingEnabled = options.perThreadTimingEnabled;
         this.tableLabels = options.tableLabels;
@@ -121,10 +134,10 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
 
 
     private Factory bufferPoolMetricFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=BufferPool,name=%s", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=BufferPool,name=%s", jmxName);
         final String metricFamilyName = String.format("buffer_pool_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .build();
     }
@@ -134,22 +147,22 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
         return cqlMetricFactory(collectorConstructor, jmxName, familyNameSuffix, help, ImmutableMap.of());
     }
 
-    private Factory cqlMetricFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help, final Map<String, String> labels) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=CQL,name=%s", jmxName);
+    private Factory cqlMetricFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help, final Map<String, String> staticLabels) {
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=CQL,name=%s", jmxName);
         final String metricFamilyName = String.format("cql_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
-                .withLabelMaker(keyPropertyList -> labels)
+                .withStaticLabels(staticLabels)
                 .build();
     }
 
 
     private Factory cacheMetricFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=Cache,scope=*,name=%s", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=Cache,scope=*,name=%s", jmxName);
         final String metricFamilyName = String.format("cache_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .withLabelMaker(keyPropertyList -> ImmutableMap.of(
                         "cache", keyPropertyList.get("scope").replaceAll("Cache", "").toLowerCase()
@@ -159,19 +172,19 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
 
 
     private Factory clientMetricFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=Client,name=%s", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=Client,name=%s", jmxName);
         final String metricFamilyName = String.format("client_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .build();
     }
 
     private Factory clientRequestMetricFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=ClientRequest,name=%s,scope=*", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=ClientRequest,name=%s,scope=*", jmxName);
         final String metricFamilyName = String.format("client_request_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .withLabelMaker(keyPropertyList -> {
                     final String scope = keyPropertyList.get("scope");
@@ -203,19 +216,19 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
     }
 
     private Factory commitLogMetricFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=CommitLog,name=%s", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=CommitLog,name=%s", jmxName);
         final String metricFamilyName = String.format("commit_log_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .build();
     }
 
     private Factory messagingMetricFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=Messaging,name=%s", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=Messaging,name=%s", jmxName);
         final String metricFamilyName = String.format("messaging_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .withLabelMaker(keyPropertyList -> {
                     final String name = keyPropertyList.get("name");
@@ -232,19 +245,19 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
     }
 
     private Factory memtablePoolMetricsFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=MemtablePool,name=%s", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=MemtablePool,name=%s", jmxName);
         final String metricFamilyName = String.format("memtable_pool_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .build();
     }
 
     private Factory storageMetric(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=Storage,name=%s", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=Storage,name=%s", jmxName);
         final String metricFamilyName = String.format("storage_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .build();
     }
@@ -269,19 +282,19 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
         return tableMetricFactory(collectorConstructor, jmxName, familyNameSuffix, help, true, ImmutableMap.of());
     }
 
-    private Factory tableMetricFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help, final Map<String, String> extraLabels) {
-        return tableMetricFactory(collectorConstructor, jmxName, familyNameSuffix, help, false, extraLabels);
+    private Factory tableMetricFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help, final Map<String, String> staticLabels) {
+        return tableMetricFactory(collectorConstructor, jmxName, familyNameSuffix, help, false, staticLabels);
     }
 
-    private Factory tableMetricFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help, final boolean includeCompactionLabels, final Map<String, String> extraLabels) {
-        final QueryExp objectNameQuery = Query.or(
-                format("org.apache.cassandra.metrics:type=Table,keyspace=*,scope=*,name=%s", jmxName),
-                format("org.apache.cassandra.metrics:type=IndexTable,keyspace=*,scope=*,name=%s", jmxName)
+    private Factory tableMetricFactory(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help, final boolean includeCompactionLabels, final Map<String, String> staticLabels) {
+        final QueryExp mBeanQuery = Query.or(
+                ObjectNames.format("org.apache.cassandra.metrics:type=Table,keyspace=*,scope=*,name=%s", jmxName),
+                ObjectNames.format("org.apache.cassandra.metrics:type=IndexTable,keyspace=*,scope=*,name=%s", jmxName)
         );
 
         final String metricFamilyName = String.format("table_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNameQuery, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .withModifier((keyPropertyList, labels) -> {
                     final String keyspaceName = keyPropertyList.get("keyspace");
@@ -297,7 +310,6 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
                         return false;
                     }
 
-                    labels.putAll(extraLabels);
                     labels.put("keyspace", keyspaceName);
 
                     if (indexName != null) {
@@ -329,14 +341,15 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
 
                     return true;
                 })
+                .withStaticLabels(staticLabels)
                 .build();
     }
 
     private Factory threadPoolMetric(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=ThreadPools,path=*,scope=*,name=%s", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=ThreadPools,path=*,scope=*,name=%s", jmxName);
         final String metricFamilyName = String.format("thread_pool_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .withLabelMaker(keyPropertyList -> ImmutableMap.of(
                         "group", keyPropertyList.get("path"),
@@ -346,36 +359,36 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
     }
 
     private Factory rowIndexMetric(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=Index,scope=RowIndexEntry,name=%s", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=Index,scope=RowIndexEntry,name=%s", jmxName);
         final String metricFamilyName = String.format("row_index_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName).build();
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName).build();
     }
 
     private Factory droppedMessagesMetric(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=DroppedMessage,scope=*,name=%s", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=DroppedMessage,scope=*,name=%s", jmxName);
         final String metricFamilyName = String.format("dropped_messages_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .withLabelMaker(keyPropertyList -> ImmutableMap.of("message_type", keyPropertyList.get("scope")))
                 .build();
     }
 
     private Factory compactionMetric(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=Compaction,name=%s", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=Compaction,name=%s", jmxName);
         final String metricFamilyName = String.format("compaction_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .build();
     }
 
     private Factory connectionMetric(final FactoryBuilder.CollectorConstructor collectorConstructor, final String jmxName, final String familyNameSuffix, final String help) {
-        final ObjectName objectNamePattern = format("org.apache.cassandra.metrics:type=Connection,scope=*,name=%s", jmxName);
+        final QueryExp mBeanQuery = ObjectNames.format("org.apache.cassandra.metrics:type=Connection,scope=*,name=%s", jmxName);
         final String metricFamilyName = String.format("endpoint_connection_%s", familyNameSuffix);
 
-        return new FactoryBuilder(collectorConstructor, objectNamePattern, metricFamilyName)
+        return new FactoryBuilder(collectorConstructor, mBeanQuery, metricFamilyName)
                 .withHelp(help)
                 .withLabelMaker(keyPropertyList -> {
                     final HashMap<String, String> labels = new HashMap<>();
@@ -404,33 +417,29 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
 
 
     private static FactoryBuilder.CollectorConstructor timerAsSummaryCollectorConstructor() {
-        return (name, help, labels, mBean) -> {
+        return (name, source, help, labels, mBean) -> {
             final NamedObject<SamplingCounting> samplingCountingNamedObject = CassandraMetricsUtilities.jmxTimerMBeanAsSamplingCounting(mBean);
 
-            return new FunctionalMetricFamilyCollector<>(name, help, ImmutableMap.of(labels, samplingCountingNamedObject), samplingAndCountingAsSummary(MetricValueConversionFunctions::microsecondsToSeconds));
+            return new FunctionalMetricFamilyCollector<>(name, ImmutableSet.of(source), help, ImmutableMap.of(labels, samplingCountingNamedObject), samplingAndCountingAsSummary(MetricValueConversionFunctions::microsecondsToSeconds));
         };
     }
 
     private static FactoryBuilder.CollectorConstructor histogramAsSummaryCollectorConstructor() {
-        return (name, help, labels, mBean) -> {
+        return (name, source, help, labels, mBean) -> {
             final NamedObject<SamplingCounting> samplingCountingNamedObject = CassandraMetricsUtilities.jmxHistogramAsSamplingCounting(mBean);
 
-            return new FunctionalMetricFamilyCollector<>(name, help, ImmutableMap.of(labels, samplingCountingNamedObject), samplingAndCountingAsSummary());
+            return new FunctionalMetricFamilyCollector<>(name, ImmutableSet.of(source), help, ImmutableMap.of(labels, samplingCountingNamedObject), samplingAndCountingAsSummary());
         };
     }
 
     private static <T> FactoryBuilder.CollectorConstructor functionalCollectorConstructor(final FunctionalMetricFamilyCollector.CollectorFunction<T> function) {
-        return (final String name, final String help, final Labels labels, final NamedObject<?> mBean) ->
-                new FunctionalMetricFamilyCollector<>(name, help, ImmutableMap.of(labels, mBean.<T>cast()), function);
+        return (final String name, final Source source, final String help, final Labels labels, final NamedObject<?> mBean) ->
+                new FunctionalMetricFamilyCollector<>(name, ImmutableSet.of(source), help, ImmutableMap.of(labels, mBean.<T>cast()), function);
     }
-
-
-
 
     private Factory cache(final Factory delegate, final long duration, final TimeUnit unit) {
         return CachingCollector.cache(delegate, duration, unit);
     }
-
 
     @Override
     public List<Factory> get() {
@@ -484,6 +493,8 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
         {
             builder.add(clientMetricFactory(functionalCollectorConstructor(meterAsCounter()), "AuthFailure", "authentication_failures_total", "Total number of failed client authentication requests (since server start)."));
             builder.add(clientMetricFactory(functionalCollectorConstructor(meterAsCounter()), "AuthSuccess", "authentication_successes_total", "Total number of successful client authentication requests (since server start)."));
+
+            // TODO: the following should be a single family with a "type" label.
             builder.add(clientMetricFactory(functionalCollectorConstructor(numericGaugeAsGauge()), "connectedNativeClients", "native_connections", "Current number of CQL connections."));
             builder.add(clientMetricFactory(functionalCollectorConstructor(numericGaugeAsGauge()), "connectedThriftClients", "thrift_connections", "Current number of Thrift connections."));
         }
@@ -581,6 +592,7 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
             builder.add(storageMetric(functionalCollectorConstructor(counterAsCounter()), "Exceptions", "exceptions_total", null));
             builder.add(storageMetric(functionalCollectorConstructor(counterAsGauge()), "Load", "load_bytes", null));
             builder.add(storageMetric(functionalCollectorConstructor(counterAsCounter()), "TotalHints", "hints_total", null));
+            // TODO: is this also a "total"?
             builder.add(storageMetric(functionalCollectorConstructor(counterAsCounter()), "TotalHintsInProgress", "hints_in_progress", null));
         }
 
@@ -684,10 +696,12 @@ public class FactoriesSupplier implements Supplier<List<Factory>> {
 
         // org.apache.cassandra.metrics.ThreadPoolMetrics
         {
+            // TODO: should the following be combined into a single family and labeled?
             builder.add(threadPoolMetric(functionalCollectorConstructor(numericGaugeAsGauge()), "ActiveTasks", "active_tasks", null));
+            builder.add(threadPoolMetric(functionalCollectorConstructor(counterAsGauge()), "CurrentlyBlockedTasks", "blocked_tasks", null));
+
             builder.add(threadPoolMetric(functionalCollectorConstructor(numericGaugeAsCounter()), "CompletedTasks", "completed_tasks_total", null));
             builder.add(threadPoolMetric(functionalCollectorConstructor(counterAsCounter()), "TotalBlockedTasks", "blocked_tasks_total", null));
-            builder.add(threadPoolMetric(functionalCollectorConstructor(counterAsGauge()), "CurrentlyBlockedTasks", "blocked_tasks", null));
             builder.add(threadPoolMetric(functionalCollectorConstructor(numericGaugeAsGauge()), "MaxPoolSize", "maximum_tasks", null));
         }
 

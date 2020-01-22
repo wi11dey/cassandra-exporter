@@ -1,5 +1,7 @@
 package com.zegelin.prometheus.domain;
 
+import com.zegelin.jmx.NamedObject;
+
 import java.util.Objects;
 
 public abstract class Metric {

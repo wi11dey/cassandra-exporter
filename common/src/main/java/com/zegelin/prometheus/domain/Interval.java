@@ -68,7 +68,7 @@ public final class Interval {
     }
 
     public Interval transform(final FloatFloatFunction valueTransformFn) {
-        if (valueTransformFn == FloatFloatFunction.identity())
+        if (valueTransformFn == FloatFloatFunction.IDENTITY)
             return this;
 
         return new Interval(this.quantile, valueTransformFn.apply(this.value));

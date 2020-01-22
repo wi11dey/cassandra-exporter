@@ -80,7 +80,7 @@ public class Application implements Callable<Void> {
     private String cqlPassword;
 
     @Option(names = {"-v", "--verbose"}, description = "Enable verbose logging. Multiple invocations increase the verbosity.")
-    boolean[] verbosity = {};
+    private boolean[] verbosity = {};
 
 
     @Override

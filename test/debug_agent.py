@@ -65,8 +65,10 @@ if __name__ == '__main__':
     node = ccm_cluster.nodelist()[0]
     print(f'Configuring node {node.name}')
 
-    node.set_environment_variable('JVM_OPTS', f'-javaagent:{args.exporter_jar.path}={args.exporter_args} '
-                                              f'-agentlib:jdwp=transport=dt_socket,server=y,suspend={yesno_bool(args.jvm_debug_wait_attach)},address={args.jvm_debug_address}')
+    node.set_environment_variable('JVM_OPTS',
+                                  f'-agentlib:jdwp=transport=dt_socket,server=y,suspend={yesno_bool(args.jvm_debug_wait_attach)},address={args.jvm_debug_address} '
+                                  f'-javaagent:{args.exporter_jar.path}={args.exporter_args}'
+                                  )
 
     print(f'JVM remote debugger listening on {args.jvm_debug_address}. JVM will suspend on start.')
     print('Starting single node cluster...')

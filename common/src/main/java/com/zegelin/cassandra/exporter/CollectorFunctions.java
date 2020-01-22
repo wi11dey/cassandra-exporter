@@ -31,7 +31,7 @@ public final class CollectorFunctions {
         return group -> {
             final Stream<NumericMetric> metricStream = counterMetricsStream(group, scaleFunction);
 
-            return Stream.of(new CounterMetricFamily(group.name(), group.help(), metricStream));
+            return Stream.of(new CounterMetricFamily(group.name(), group.help(), group.sources(), metricStream));
         };
     }
 
@@ -47,12 +47,12 @@ public final class CollectorFunctions {
         return group -> {
             final Stream<NumericMetric> metricStream = counterMetricsStream(group, scaleFunction);
 
-            return Stream.of(new GaugeMetricFamily(group.name(), group.help(), metricStream));
+            return Stream.of(new GaugeMetricFamily(group.name(), group.help(), group.sources(), metricStream));
         };
     }
 
     public static CollectorFunction<JmxCounterMBean> counterAsGauge() {
-        return counterAsGauge(FloatFloatFunction.identity());
+        return counterAsGauge(FloatFloatFunction.IDENTITY);
     }
 
 
@@ -70,12 +70,12 @@ public final class CollectorFunctions {
                     .map(e -> new NumericMetric(e.labels, scaleFunction.apply((float) e.meter.getCount())));
 
 
-            return Stream.of(new CounterMetricFamily(group.name(), group.help(), metricStream));
+            return Stream.of(new CounterMetricFamily(group.name(), group.help(), group.sources(), metricStream));
         };
     }
 
     public static CollectorFunction<JmxMeterMBean> meterAsCounter() {
-        return meterAsCounter(FloatFloatFunction.identity());
+        return meterAsCounter(FloatFloatFunction.IDENTITY);
     }
 
 
@@ -95,12 +95,12 @@ public final class CollectorFunctions {
         return group -> {
             final Stream<NumericMetric> metricStream = numericGaugeMetricsStream(group, scaleFunction);
 
-            return Stream.of(new GaugeMetricFamily(group.name(), group.help(), metricStream));
+            return Stream.of(new GaugeMetricFamily(group.name(), group.help(), group.sources(), metricStream));
         };
     }
 
     public static CollectorFunction<JmxGaugeMBean> numericGaugeAsGauge() {
-        return numericGaugeAsGauge(FloatFloatFunction.identity());
+        return numericGaugeAsGauge(FloatFloatFunction.IDENTITY);
     }
 
 
@@ -111,12 +111,12 @@ public final class CollectorFunctions {
         return group -> {
             final Stream<NumericMetric> metricStream = numericGaugeMetricsStream(group, scaleFunction);
 
-            return Stream.of(new CounterMetricFamily(group.name(), group.help(), metricStream));
+            return Stream.of(new CounterMetricFamily(group.name(), group.help(), group.sources(), metricStream));
         };
     }
 
     public static CollectorFunction<JmxGaugeMBean> numericGaugeAsCounter() {
-        return numericGaugeAsCounter(FloatFloatFunction.identity());
+        return numericGaugeAsCounter(FloatFloatFunction.IDENTITY);
     }
 
 
@@ -145,7 +145,7 @@ public final class CollectorFunctions {
                         return new SummaryMetricFamily.Summary(e.labels, Float.NaN, histogram.count(), quantiles);
                     });
 
-            return Stream.of(new SummaryMetricFamily(group.name(), group.help(), summaryStream));
+            return Stream.of(new SummaryMetricFamily(group.name(), group.help(), group.sources(), summaryStream));
         };
     }
 
@@ -169,11 +169,11 @@ public final class CollectorFunctions {
                         return new SummaryMetricFamily.Summary(e.labels, Float.NaN, e.samplingCounting.getCount(), quantiles);
                     });
 
-            return Stream.of(new SummaryMetricFamily(group.name(), group.help(), summaryStream));
+            return Stream.of(new SummaryMetricFamily(group.name(), group.help(), group.sources(), summaryStream));
         };
     }
 
     public static CollectorFunction<SamplingCounting> samplingAndCountingAsSummary() {
-        return samplingAndCountingAsSummary(FloatFloatFunction.identity());
+        return samplingAndCountingAsSummary(FloatFloatFunction.IDENTITY);
     }
 }

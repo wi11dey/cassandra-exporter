@@ -14,6 +14,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
 import javax.management.MalformedObjectNameException;
+import javax.management.ObjectInstance;
 import javax.management.ObjectName;
 import java.net.InetAddress;
 import java.util.*;
@@ -157,8 +158,8 @@ public abstract class Harvester {
     }
 
 
-    protected void registerMBean(final Object mBean, final ObjectName name) {
-        if (isExcluded(name)) {
+    protected void registerMBean(final NamedObject<?> object) {
+        if (isExcluded(object.name)) {
             return;
         }
 
@@ -167,28 +168,26 @@ public abstract class Harvester {
         // internal Schema. As a result, when run as an agent, registerMBean will be called during table creation
         // and table metadata lookups in the factory will fail because the table doesn't yet exist in the Schema.
         defer(() -> {
-            final NamedObject<Object> namedMBean = new NamedObject<>(name, mBean);
-
             for (final MBeanGroupMetricFamilyCollector.Factory factory : collectorFactories) {
                 try {
-                    final MBeanGroupMetricFamilyCollector collector = factory.createCollector(namedMBean);
+                    final MBeanGroupMetricFamilyCollector collector = factory.createCollector(object);
 
                     if (collector == null) {
                         continue;
                     }
 
                     if (isExcluded(collector)) {
-                        logger.debug("Skipping registration of collector {} for MBean {} as it matches an exclusion rule.", collector.name(), name);
+                        logger.debug("Skipping registration of collector {} for MBean {} as it matches an exclusion rule.", collector.name(), object.name);
                         continue;
                     }
 
-                    logger.debug("Registering collector {} for MBean {}.", collector.name(), name);
+                    logger.debug("Registering collector {} for MBean {}.", collector.name(), object.name);
 
                     mBeanCollectorsByName.merge(collector.name(), collector, MBeanGroupMetricFamilyCollector::merge);
-                    mBeanNameToCollectorNameMap.put(name, collector.name());
+                    mBeanNameToCollectorNameMap.put(object.name, collector.name());
 
                 } catch (final Exception e) {
-                    logger.warn("Failed to register collector for MBean {}.", name, e);
+                    logger.warn("Failed to register collector for MBean {}.", object.name, e);
                 }
             }
         });
@@ -275,7 +274,7 @@ public abstract class Harvester {
                 .map(e -> new NumericMetric(Labels.of("collector", e.metricFamilyName), nanosecondsToSeconds(e.cumulativeCollectionTime)));
 
         return Stream.of(
-                new CounterMetricFamily("cassandra_exporter_collection_time_seconds_total", "Cumulative time taken to run each metrics collector.", timingMetrics)
+                new CounterMetricFamily("cassandra_exporter_collection_time_seconds_total", "Cumulative time taken to run each metrics collector.", null, timingMetrics)
         );
     }
 

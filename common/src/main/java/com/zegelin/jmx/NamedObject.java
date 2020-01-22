@@ -14,13 +14,15 @@ import java.util.function.BiFunction;
 public class NamedObject<T> {
     public final ObjectName name;
     public final T object;
+    public final String interfaceClassName;
 
-    public NamedObject(final ObjectName name, final T object) {
+    public NamedObject(final ObjectName name, final T object, final String interfaceClassName) {
         Preconditions.checkNotNull(name);
         Preconditions.checkNotNull(object);
 
-        this.object = object;
         this.name = name;
+        this.object = object;
+        this.interfaceClassName = interfaceClassName;
     }
 
     @SuppressWarnings("unchecked")
@@ -31,7 +33,7 @@ public class NamedObject<T> {
     public <U> NamedObject<U> map(final BiFunction<ObjectName, ? super T, ? extends U> mapper) {
         final U mappedObject = mapper.apply(name, object);
 
-        return mappedObject == null ? null : new NamedObject<>(name, mappedObject);
+        return mappedObject == null ? null : new NamedObject<>(name, mappedObject, interfaceClassName);
     }
 
     @Override

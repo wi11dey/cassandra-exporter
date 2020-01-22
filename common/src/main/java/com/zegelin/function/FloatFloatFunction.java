@@ -4,7 +4,5 @@ package com.zegelin.function;
 public interface FloatFloatFunction {
     float apply(float f);
 
-    static FloatFloatFunction identity() {
-        return (f) -> f;
-    }
+    FloatFloatFunction IDENTITY = (f) -> f;
 }

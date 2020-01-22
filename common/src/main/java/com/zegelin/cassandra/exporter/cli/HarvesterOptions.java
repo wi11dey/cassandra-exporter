@@ -67,7 +67,7 @@ public class HarvesterOptions {
             description = "Select which global labels to include on all exported metrics. " +
                     "Valid options are: 'CLUSTER' (cluster name), 'NODE' (node endpoint IP address), " +
                     "'DATACENTER' (DC name), 'RACK' (rack name). " +
-                    "The default is to include all global labels except HOST_ID. " +
+                    "The default is to include all global labels. " +
                     "To disable all global labels use --no-global-labels."
     )
     public Set<Harvester.GlobalLabel> globalLabels = EnumSet.allOf(Harvester.GlobalLabel.class);

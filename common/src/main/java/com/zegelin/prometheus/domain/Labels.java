@@ -14,6 +14,8 @@ public final class Labels extends ForwardingMap<String, String> {
 
     private ByteBuf plainTextFormatUTF8EncodedByteBuf, jsonFormatUTF8EncodedByteBuf;
 
+    private static Labels EMPTY_INSTANCE = new Labels(ImmutableMap.of());
+
     public Labels(final Map<String, String> labels) {
         this.labels = ImmutableMap.copyOf(labels);
         this.isEmpty = this.labels.isEmpty();
@@ -24,7 +26,7 @@ public final class Labels extends ForwardingMap<String, String> {
     }
 
     public static Labels of() {
-        return new Labels(ImmutableMap.of());
+        return EMPTY_INSTANCE;
     }
 
     @Override

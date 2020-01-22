@@ -4,6 +4,9 @@ import com.google.common.escape.CharEscaperBuilder;
 import com.google.common.escape.Escaper;
 import com.zegelin.netty.Floats;
 import com.zegelin.prometheus.domain.*;
+import com.zegelin.prometheus.domain.source.MBeanQuerySource;
+import com.zegelin.prometheus.domain.source.Source;
+import com.zegelin.prometheus.domain.source.SourceVisitor;
 import io.netty.buffer.ByteBuf;
 import io.netty.buffer.ByteBufUtil;
 
@@ -54,14 +57,31 @@ class TextFormatMetricFamilyWriter {
     }
 
     class HeaderVisitor implements MetricFamilyVisitor<Consumer<ByteBuf>> {
-        private void writeFamilyHeader(final MetricFamily metricFamily, final ByteBuf buffer, final MetricFamilyType type) {
+        private void writeFamilyHeader(final MetricFamily<?> metricFamily, final ByteBuf buffer, final MetricFamilyType type) {
             // # HELP <family name> <help>\n
             if (includeHelp && metricFamily.help != null) {
                 ByteBufUtil.writeAscii(buffer, "# HELP ");
                 ByteBufUtil.writeAscii(buffer, metricFamily.name);
                 buffer.writeByte(' ');
-                ByteBufUtil.writeUtf8(buffer, HELP_STRING_ESCAPER.escape(metricFamily.help));
+                ByteBufUtil.writeUtf8(buffer, HELP_STRING_ESCAPER.escape(metricFamily.help)); // TODO: pre-cache
                 buffer.writeByte('\n');
+            }
+
+            if (includeHelp && !metricFamily.sources.isEmpty()) {
+                for (final Source source : metricFamily.sources) {
+                    source.visit(new SourceVisitor() {
+                        @Override
+                        public void visit(final MBeanQuerySource source) {
+                            ByteBufUtil.writeAscii(buffer, "# ");
+                            ByteBufUtil.writeAscii(buffer, source.mBeanQuery.toString());
+                            buffer.writeByte(' ');
+                            buffer.writeBytes(source.staticLabels.asPlainTextFormatUTF8EncodedByteBuf().slice());
+                            buffer.writeByte(' ');
+                            ByteBufUtil.writeAscii(buffer, source.mBeanClassName);
+                            buffer.writeByte('\n');
+                        }
+                    });
+                }
             }
 
             // # TYPE <family name> <type>\n
