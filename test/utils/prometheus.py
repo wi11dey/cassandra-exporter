@@ -17,9 +17,6 @@ from tqdm import tqdm
 
 import logging
 
-from utils.log_mixin import LogMixin
-
-
 class _TqdmIOStream(object):
     def __init__(self, stream, t):
         self._stream = stream
