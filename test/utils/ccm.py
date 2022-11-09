@@ -3,7 +3,7 @@ import signal
 import subprocess
 import time
 from pathlib import Path
-from typing import List
+from typing import List, Optional
 
 from ccmlib.cluster import Cluster
 
@@ -24,10 +24,10 @@ class TestCluster(Cluster):
     def __init__(self, cluster_directory: Path, cassandra_version: str,
                  nodes: int, racks: int, datacenters: int,
                  exporter_jar: ExporterJar,
-                 stop_on_exit: bool = True, delete_cluster_on_stop: bool = True):
+                 initial_schema: Optional[CqlSchema]):
 
         if cluster_directory.exists():
-            cluster_directory.rmdir()  # CCM wants to create this
+            raise RuntimeError(f'Cluster directory {cluster_directory} must not exist.')  # CCM wants to create this
 
         super().__init__(
             path=cluster_directory.parent,
@@ -36,10 +36,8 @@ class TestCluster(Cluster):
             create_directory=True  # if this is false, various config files wont be created...
         )
 
-        self.stop_on_exit = stop_on_exit
-        self.delete_cluster_on_stop = delete_cluster_on_stop
-
         self.exporter_jar = exporter_jar
+        self.initial_schema = initial_schema
 
         self.populate(nodes, racks, datacenters)
 
@@ -69,15 +67,23 @@ class TestCluster(Cluster):
 
         return result
 
-    def start(self, no_wait=False, verbose=False, wait_for_binary_proto=True, wait_other_notice=True, jvm_args=None,
+    def start(self, verbose=False, wait_for_binary_proto=True, wait_other_notice=True, jvm_args=None,
               profile_options=None, quiet_start=False, allow_root=False, **kwargs):
 
-        result = super().start(no_wait, verbose, wait_for_binary_proto, wait_other_notice, jvm_args, profile_options,
+        self.logger.info('Starting Cassandra cluster...')
+        result = super().start(False, verbose, wait_for_binary_proto, wait_other_notice, jvm_args, profile_options,
                                quiet_start, allow_root, **kwargs)
+        self.logger.info('Cassandra cluster started successfully')
+
+        if self.initial_schema:
+            self.logger.info('Applying initial CQL schema...')
+            self.apply_schema(self.initial_schema)
 
         # start the standalone exporters, if requested
         if self.exporter_jar.type == ExporterJar.ExporterType.STANDALONE:
             for node in self.nodelist():
+                self.logger.info('Starting standalone cassandra-exporter for node %s...', node.ip_addr)
+
                 process = self.exporter_jar.start_standalone(
                     logfile_path=Path(node.get_path()) / 'logs' / 'cassandra-exporter.log',
                     listen_address=('localhost', node.exporter_port),
@@ -87,20 +93,24 @@ class TestCluster(Cluster):
 
                 self.standalone_processes.append(process)
 
+            self.logger.info('Standalone cassandra-exporters started successfully')
+
         return result
 
     def stop(self, wait=True, signal_event=signal.SIGTERM, **kwargs):
+        if len(self.standalone_processes):
+            # shutdown standalone exporters, if they're still running
+            self.logger.info('Stopping standalone cassandra-exporters...')
+            for p in self.standalone_processes:
+                p.terminate()
+
+                if wait:
+                    p.wait()
+            self.logger.info('Standalone cassandra-exporters stopped')
+
+        self.logger.info('Stopping Cassandra cluster...')
         result = super().stop(wait, signal_event, **kwargs)
-
-        # shutdown standalone exporters, if they're still running
-        for p in self.standalone_processes:
-            p.terminate()
-
-            if wait:
-                p.wait()
-
-        if self.delete_cluster_on_stop:
-            shutil.rmtree(self.get_path())
+        self.logger.info('Cassandra cluster stopped')
 
         return result
 
@@ -113,15 +123,14 @@ class TestCluster(Cluster):
                     self.logger.debug('Executing CQL statement "{}".'.format(stmt.split('\n')[0]))
                     cql_session.execute(stmt)
 
-        # the collector defers registrations by a second or two.
-        # See com.zegelin.cassandra.exporter.Harvester.defer()
-        self.logger.info('Pausing to wait for deferred MBean registrations to complete.')
-        time.sleep(5)
+        # # the collector defers registrations by a second or two.
+        # # See com.zegelin.cassandra.exporter.Harvester.defer()
+        # self.logger.info('Pausing to wait for deferred MBean registrations to complete.')
+        # time.sleep(5)
 
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        if self.stop_on_exit:
-            self.stop()
+        self.stop()
 
