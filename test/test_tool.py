@@ -3,6 +3,7 @@ import inspect
 import logging
 import os
 import sys
+import tarfile
 import typing as t
 from contextlib import contextmanager
 import shutil
@@ -10,13 +11,16 @@ import tempfile
 from functools import wraps, update_wrapper, WRAPPER_UPDATES
 from itertools import chain
 from pathlib import Path
+from tarfile import TarFile
+
 import pkg_resources
 
 import click
+import cloup
 
 from utils.ccm import TestCluster
 from utils.jar_utils import ExporterJar
-from utils.prometheus import PrometheusInstance
+from utils.prometheus import PrometheusInstance, RemotePrometheusArchive, archive_from_path_or_url
 from utils.schema import CqlSchema
 
 logger = logging.getLogger('test-tool')
@@ -146,14 +150,17 @@ def with_ccm_cluster():
         jar_types = [type.name.lower() for type in ExporterJar.ExporterType]
 
         @click.argument('cassandra_version')
-        @click.option('--cluster-name', 'cassandra_cluster_name', default='test-cluster', show_default=True)
-        @click.option('--topology', 'cassandra_topology',
-                      type=(int, int, int), default=(2, 3, 1), show_default=True,
-                      metavar='DCS RACKS NODES', help="number of data centers, racks per data center, and nodes per rack.")
-        @click.option('-j', '--exporter-jar', required=True, default=jar_default_path, show_default=True, type=ExporterJarParamType(),
-                      help=f"path of the cassandra-exporter jar, either {ppstrlist(jar_types)} builds, or one of {ppstrlist(jar_types, quote=True)} for the default jar of that type.")
-        @click.option('-s', '--schema', 'cql_schema', default=CqlSchema.default_schema_path(), show_default=True, type=CqlSchemaParamType(),
-                       help='path of the CQL schema YAML file to apply on cluster start. The YAML file must contain a list of CQL statement strings.')
+        @cloup.option_group(
+            "Cassandra",
+            cloup.option('--cluster-name', 'cassandra_cluster_name', default='test-cluster', show_default=True),
+            cloup.option('--topology', 'cassandra_topology',
+                          type=(int, int, int), default=(2, 3, 1), show_default=True,
+                          metavar='DCS RACKS NODES', help="number of data centers, racks per data center, and nodes per rack."),
+            cloup.option('-j', '--exporter-jar', required=True, default=jar_default_path, show_default=True, type=ExporterJarParamType(),
+                          help=f"path of the cassandra-exporter jar, either {ppstrlist(jar_types)} builds, or one of {ppstrlist(jar_types, quote=True)} for the default jar of that type."),
+            cloup.option('-s', '--schema', 'cql_schema', default=CqlSchema.default_schema_path(), show_default=True, type=CqlSchemaParamType(),
+                           help='path of the CQL schema YAML file to apply on cluster start. The YAML file must contain a list of CQL statement strings.')
+        )
         @click.pass_context
         @wraps(func)
         def wrapper(ctx: click.Context,
@@ -186,31 +193,69 @@ def with_ccm_cluster():
     return decorator
 
 
+# class PrometheusArchiveParamType(click.ParamType):
+#     name = "tag/path/URL"
+#
+#     def convert(self, value: t.Any, param: t.Optional[click.Parameter], ctx: t.Optional[click.Context]) -> PrometheusArchive:
+#         if isinstance(value, PrometheusArchive):
+#             return value
+#
+#         try:
+#             if isinstance(value, str):
+#                 for t in ExporterJar.ExporterType:
+#                     if t.name.lower() == value.lower():
+#                         return ExporterJar.from_path(ExporterJar.default_jar_path(t))
+#
+#
+#             return ExporterJar.from_path(value)
+#
+#         except Exception as e:
+#             self.fail(str(e), param, ctx)
+
+
 def with_prometheus():
     def decorator(func: t.Callable) -> t.Callable:
-        @click.option('--prometheus-version', 'prometheus_version', default='test-cluster', show_default=True)
+        @cloup.option_group(
+            "Prometheus Archive",
+            cloup.option('--prometheus-version', metavar='TAG'),
+            cloup.option('--prometheus-archive', metavar='PATH/URL'),
+            constraint=cloup.constraints.mutually_exclusive
+        )
+        #@click.option('--prometheus-version', 'prometheus_version', default='test-cluster', show_default=True)
         @click.pass_context
         @wraps(func)
         def wrapper(ctx: click.Context,
+                    prometheus_version: str,
+                    prometheus_archive: str,
                     working_directory: Path,
                     ccm_cluster: t.Optional[TestCluster] = None,
                     **kwargs):
 
+            if prometheus_version is None and prometheus_archive is None:
+                prometheus_version = 'latest'
 
-            # prometheus = ctx.with_resource(PrometheusInstance(
-            #     archive=args.prometheus_archive,
-            #     working_directory=working_directory
-            # ))
+            if prometheus_version is not None:
+                archive = RemotePrometheusArchive.for_tag(prometheus_version)
+
+            else:
+                archive = archive_from_path_or_url(prometheus_archive)
+
+            if isinstance(archive, RemotePrometheusArchive):
+                archive = archive.download()
+
+            prometheus = ctx.with_resource(PrometheusInstance(
+                archive=archive,
+                working_directory=working_directory
+            ))
 
             if ccm_cluster:
-                pass
-                # prometheus.set_scrape_config('cassandra',
-                #                              [f'localhost:{n.exporter_port}' for n in ccm_cluster.nodelist()]
-                #                              )
+                prometheus.set_static_scrape_config('cassandra',
+                                                    [str(n.exporter_address) for n in ccm_cluster.nodelist()]
+                                                    )
 
             fixup_kwargs()
 
-            func(prometheus=None, **kwargs)
+            func(prometheus=prometheus, **kwargs)
 
         return wrapper
 
@@ -218,7 +263,7 @@ def with_prometheus():
     return decorator
 
 
-@click.group()
+@cloup.group()
 def cli():
     pass
 
@@ -227,8 +272,6 @@ def cli():
 @cli.command('demo')
 @with_working_directory()
 @with_ccm_cluster()
-# @with_prometheus()
-# @click.option('--hello')
 def run_demo_cluster(ccm_cluster: TestCluster, **kwargs):
     """
     Start C* with the exporter jar (agent or standalone).
@@ -237,13 +280,8 @@ def run_demo_cluster(ccm_cluster: TestCluster, **kwargs):
     """
     ccm_cluster.start()
 
-    config = {'scrape_configs': [{
-        'job_name': 'cassandra',
-        'scrape_interval': '10s',
-        'static_configs': [{
-            'targets': [f'http://localhost:{node.exporter_port}' for node in ccm_cluster.nodelist()]
-        }]
-    }]}
+    for node in ccm_cluster.nodelist():
+        logger.info('Node %s cassandra-exporter running on http://%s', node.name, node.network_interfaces['exporter'])
 
     sys.stderr.flush()
     sys.stdout.flush()
@@ -251,9 +289,42 @@ def run_demo_cluster(ccm_cluster: TestCluster, **kwargs):
     input("Press any key to stop cluster...")
 
 
-@cli.command()
+@cli.group('dump')
 def dump():
     pass
+
+
+@dump.command('capture')
+@with_working_directory()
+@with_ccm_cluster()
+@click.argument('filename')
+def dump_capture(ccm_cluster: TestCluster, filename: str, **kwargs):
+    """Capture metrics from cassandra-exporter and save them to disk."""
+
+    logger.info('Capturing metrics dump.')
+
+    # with tarfile.open(filename, 'w') as tf:
+    #     tf.
+
+
+
+    # for node in ccm_cluster.nodelist():
+    #     url = f'http://{node.network_interfaces["exporter"]}/metrics?x-accept=text/plain'
+    #     destination = args.output_directory / f'{node.name}.txt'
+    #     urllib.request.urlretrieve(url, destination)
+    #
+    #     logger.info(f'Wrote {url} to {destination}')
+
+
+@dump.command('validate')
+def dump_validate():
+    pass
+
+
+def dump_compare():
+    pass
+
+
 
 # capture dump (start C* with exporter, fetch and write metrics to file)
     # this is every similar to the demo cmd
@@ -265,9 +336,9 @@ def dump():
 @with_working_directory()
 @with_ccm_cluster()
 @with_prometheus()
-def e2e(ccm_cluster: TestCluster, prometheus: PrometheusInstance):
+def e2e(ccm_cluster: TestCluster, prometheus: PrometheusInstance, **kwargs):
     """
-    Run end-to-end tests.
+    Run cassandra-exporter end-to-end tests.
 
     - Start C* with the exporter JAR (agent or standalone).
     - Setup a schema.
@@ -276,41 +347,44 @@ def e2e(ccm_cluster: TestCluster, prometheus: PrometheusInstance):
     - Run some tests.
     """
 
-    logger.info('Starting Prometheus.')
-    prometheus.start()
-
-    logger.info('Starting Cassandra cluster.')
     ccm_cluster.start()
 
-    while True:
-        targets = prometheus.get_targets()
+    prometheus.start()
 
-        if len(targets['activeTargets']) > 0:
-            for target in targets['activeTargets']:
-                labels = frozendict(target['labels'])
+    input("Press any key to stop cluster...")
 
-                # even if the target health is unknown, ensure the key exists so the length check below
-                # is aware of the target
-                history = target_histories[labels]
+    # while True:
+    #     targets = prometheus.get_targets()
+    #
+    #     if len(targets['activeTargets']) > 0:
+    #         for target in targets['activeTargets']:
+    #             labels = frozendict(target['labels'])
+    #
+    #             # even if the target health is unknown, ensure the key exists so the length check below
+    #             # is aware of the target
+    #             history = target_histories[labels]
+    #
+    #             if target['health'] == 'unknown':
+    #                 continue
+    #
+    #             history[target['lastScrape']] = (target['health'], target['lastError'])
+    #
+    #         if all([len(v) >= 5 for v in target_histories.values()]):
+    #             break
+    #
+    #     time.sleep(1)
+    #
+    # unhealthy_targets = dict((target, history) for target, history in target_histories.items()
+    #                          if any([health != 'up' for (health, error) in history.values()]))
+    #
+    # if len(unhealthy_targets):
+    #     logger.error('One or more Prometheus scrape targets was unhealthy.')
+    #     logger.error(unhealthy_targets)
+    #     sys.exit(-1)
 
-                if target['health'] == 'unknown':
-                    continue
 
-                history[target['lastScrape']] = (target['health'], target['lastError'])
-
-            if all([len(v) >= 5 for v in target_histories.values()]):
-                break
-
-        time.sleep(1)
-
-    unhealthy_targets = dict((target, history) for target, history in target_histories.items()
-                             if any([health != 'up' for (health, error) in history.values()]))
-
-    if len(unhealthy_targets):
-        logger.error('One or more Prometheus scrape targets was unhealthy.')
-        logger.error(unhealthy_targets)
-        sys.exit(-1)
-
+# def timing():
+#
 
 def main():
     # load ccm extensions (useful for ccm-java8, for example)

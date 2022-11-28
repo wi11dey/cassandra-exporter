@@ -10,13 +10,13 @@ from os import PathLike
 from pathlib import Path
 from xml.etree import ElementTree
 
+from utils.net import SocketAddress
 from utils.path_utils import existing_file_arg
-
-logger = logging.getLogger(__name__)
-
 
 @dataclass
 class ExporterJar:
+    logger = logging.getLogger(f'{__name__}.{__qualname__}')
+
     class ExporterType(Enum):
         AGENT = ('Premain-Class', 'com.zegelin.cassandra.exporter.Agent')
         STANDALONE = ('Main-Class', 'com.zegelin.cassandra.exporter.Application')
@@ -64,23 +64,23 @@ class ExporterJar:
     def __str__(self) -> str:
         return f'{self.path} ({self.type.name})'
 
-    def start_standalone(self, listen_address: (str, int),
-                         jmx_address: (str, int),
-                         cql_address: (str, int),
+    def start_standalone(self, listen_address: SocketAddress,
+                         jmx_address: SocketAddress,
+                         cql_address: SocketAddress,
                          logfile_path: Path):
+
+        self.logger.info('Standalone log file: %s', logfile_path)
 
         logfile = logfile_path.open('w')
 
-        def addr_str(address: (str, int)):
-            return ':'.join(map(str, address))
-
         command = ['java',
                    '-jar', self.path,
-                   '--listen', addr_str(listen_address),
-                   '--jmx-service-url', f'service:jmx:rmi:///jndi/rmi://{addr_str(jmx_address)}/jmxrmi',
-                   '--cql-address', addr_str(cql_address)
+                   '--listen', listen_address,
+                   '--jmx-service-url', f'service:jmx:rmi:///jndi/rmi://{jmx_address}/jmxrmi',
+                   '--cql-address', cql_address
                    ]
+        command = [str(v) for v in command]
 
-        logger.debug('Standalone exec(%s)', command)
+        self.logger.debug('Standalone exec(%s)', ' '.join(command))
 
         return subprocess.Popen(command, stdout=logfile, stderr=subprocess.STDOUT)

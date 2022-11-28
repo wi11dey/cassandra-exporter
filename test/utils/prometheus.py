@@ -1,3 +1,4 @@
+import http.client
 import json
 import platform
 import re
@@ -10,8 +11,10 @@ from collections import namedtuple
 from contextlib import contextmanager
 from enum import Enum, auto
 from pathlib import Path
-from typing import List
+from typing import List, NamedTuple, Optional, Union
+from urllib.parse import urlparse
 
+import appdirs
 import yaml
 from tqdm import tqdm
 
@@ -38,12 +41,28 @@ class _TqdmIOStream(object):
         return getattr(self._stream, attr)
 
 
+class LocalPrometheusArchive(NamedTuple):
+    path: Path
 
-class PrometheusArchive(namedtuple('PrometheusArchive', ['url'])):
+    def extract(self, destination_directory: Path) -> Path:
+        archive_roots = set()
+
+        with tarfile.open(self.path, mode='r') as archive:
+            for member in archive:
+                archive_roots.add(Path(member.name).parts[0])
+
+                archive.extract(member, destination_directory)
+
+        return destination_directory / next(iter(archive_roots))
+
+
+class RemotePrometheusArchive(NamedTuple):
+    url: str
+
     logger = logging.getLogger(f'{__name__}.{__qualname__}')
 
     @classmethod
-    def default_prometheus_archive_url(cls):
+    def for_tag(cls, tag: str):
         def architecture_str():
             machine_aliases = {
                 'x86_64': 'amd64'
@@ -58,85 +77,132 @@ class PrometheusArchive(namedtuple('PrometheusArchive', ['url'])):
 
         asset_pattern = re.compile(r'prometheus-.+\.' + architecture_str() + '\.tar\..+')
 
-        with urllib.request.urlopen('https://api.github.com/repos/prometheus/prometheus/releases/latest') as response:
+        with urllib.request.urlopen(f'https://api.github.com/repos/prometheus/prometheus/releases/{tag}') as response:
             release_info = json.load(response)
 
         for asset in release_info['assets']:
             if asset_pattern.fullmatch(asset['name']) is not None:
-                return asset['browser_download_url']
+                return RemotePrometheusArchive(asset['browser_download_url'], )
 
-    @classmethod
-    def add_archive_argument(cls, name, parser):
+
+    # @classmethod
+    # def default_prometheus_archive_url(cls):
+    #     return cls.archive_url_for_tag('latest')
+
+    # @classmethod
+    # def add_archive_argument(cls, name, parser):
+    #     try:
+    #         default_url = PrometheusArchive.default_prometheus_archive_url()
+    #         default_help = '(default: %(default)s)'
+    #
+    #     except Exception as e:
+    #         cls.logger.warning('failed to determine Prometheus archive URL', exc_info=True)
+    #
+    #         default_url = None
+    #         default_help = f'(default: failed to determine archive URL)'
+    #
+    #     parser.add_argument(name, type=PrometheusArchive,
+    #                         help="Prometheus binary release archive (tar, tar+gz, tar+bzip2) URL (schemes: http, https, file) " + default_help,
+    #                         required=default_url is None,
+    #                         default=str(default_url))
+
+    @staticmethod
+    def default_download_cache_directory() -> Path:
+        return Path(appdirs.user_cache_dir('cassandra-exporter-e2e')) / 'prometheus'
+
+    def download(self, download_cache_directory: Path = None) -> LocalPrometheusArchive:
+        if download_cache_directory is None:
+            download_cache_directory = RemotePrometheusArchive.default_download_cache_directory()
+
+        url_parts = urlparse(self.url)
+        url_path = Path(url_parts.path)
+
+        destination = download_cache_directory / url_path.name
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+        if destination.exists():
+            return LocalPrometheusArchive(destination)
+
+        self.logger.info(f'Downloading {self.url} to {destination}...')
+
         try:
-            default_url = PrometheusArchive.default_prometheus_archive_url()
-            default_help = '(default: %(default)s)'
+            with tqdm(unit='bytes', unit_scale=True, miniters=1) as t:
+                def report(block_idx: int, block_size: int, file_size: int):
+                    if t.total is None:
+                        t.reset(file_size)
 
-        except Exception as e:
-            cls.logger.warning('failed to determine Prometheus archive URL', exc_info=True)
+                    t.update(block_size)
 
-            default_url = None
-            default_help = f'(default: failed to determine archive URL)'
+                urllib.request.urlretrieve(self.url, destination, report)
 
-        parser.add_argument(name, type=PrometheusArchive,
-                            help="Prometheus binary release archive (tar, tar+gz, tar+bzip2) URL (schemes: http, https, file) " + default_help,
-                            required=default_url is None,
-                            default=str(default_url))
+        except:
+            destination.unlink(missing_ok=True)  # don't leave half-download files around
+            raise
 
-    def download(self, destination: Path):
-        print(f'Downloading {self.url} to {destination}...')
-
-        archive_roots = set()
-
-        with urllib.request.urlopen(self.url) as response:
-            with tqdm(total=int(response.headers.get('Content-length')), unit='bytes', unit_scale=True, miniters=1) as t:
-                with tarfile.open(fileobj=_TqdmIOStream(response, t), mode='r|*') as archive:
-                    for member in archive:
-                        t.set_postfix(file=member.name)
-
-                        archive_roots.add(Path(member.name).parts[0])
-
-                        archive.extract(member, destination)
-
-        return destination / next(iter(archive_roots))
+        return LocalPrometheusArchive(destination)
 
 
-class PrometheusInstance(object):
+def archive_from_path_or_url(purl: str) -> Union[LocalPrometheusArchive, RemotePrometheusArchive]:
+    url_parts = urlparse(purl)
+
+    if url_parts.netloc == '':
+        return LocalPrometheusArchive(Path(purl))
+
+    return RemotePrometheusArchive(purl)
+
+
+class PrometheusInstance:
+    logger = logging.getLogger(f'{__name__}.{__qualname__}')
+
     prometheus_directory: Path = None
     prometheus_process: subprocess.Popen = None
 
-    def __init__(self, archive: PrometheusArchive, working_directory: Path, listen_address='localhost:9090'):
-        self.prometheus_directory = archive.download(working_directory)
+    def __init__(self, archive: LocalPrometheusArchive, working_directory: Path, listen_address='localhost:9090'):
+        self.prometheus_directory = archive.extract(working_directory)
         self.listen_address = listen_address
 
     def start(self, wait=True):
+        logfile_path = self.prometheus_directory / 'prometheus.log'
+        logfile = logfile_path.open('w')
+
+        self.logger.info('Starting Prometheus...')
         self.prometheus_process = subprocess.Popen(
             args=[str(self.prometheus_directory / 'prometheus'),
                   f'--web.listen-address={self.listen_address}'],
-            cwd=str(self.prometheus_directory)
+            cwd=str(self.prometheus_directory),
+            stdout=logfile,
+            stderr=subprocess.STDOUT
         )
 
         if wait:
+            self.logger.info('Waiting for Prometheus to become ready...')
             while not self.is_ready():
                 time.sleep(1)
 
+        self.logger.info('Prometheus started successfully')
+
     def stop(self):
+        self.logger.info('Stopping Prometheus...')
+
         if self.prometheus_process is not None:
             self.prometheus_process.terminate()
+
+        self.logger.info('Prometheus stopped successfully')
 
     @contextmanager
     def _modify_config(self):
         config_file_path = self.prometheus_directory / 'prometheus.yml'
 
         with config_file_path.open('r+') as stream:
-            config = yaml.load(stream)
+            config = yaml.safe_load(stream)
 
             yield config
 
             stream.seek(0)
-            yaml.dump(config, stream)
+            yaml.safe_dump(config, stream)
             stream.truncate()
 
-    def set_scrape_config(self, job_name: str, static_targets: List[str]):
+    def set_static_scrape_config(self, job_name: str, static_targets: List[str]):
         with self._modify_config() as config:
             config['scrape_configs'] = [{
                 'job_name': job_name,
@@ -150,6 +216,9 @@ class PrometheusInstance(object):
         try:
             with urllib.request.urlopen(f'http://{self.listen_address}/-/ready') as response:
                 return response.status == 200
+
+        except urllib.error.HTTPError as e:
+            return False
 
         except urllib.error.URLError as e:
             if isinstance(e.reason, ConnectionRefusedError):

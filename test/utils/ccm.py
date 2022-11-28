@@ -8,6 +8,7 @@ from typing import List, Optional
 from ccmlib.cluster import Cluster
 
 from utils.jar_utils import ExporterJar
+from utils.net import SocketAddress
 from utils.schema import CqlSchema
 
 import cassandra.cluster
@@ -47,10 +48,10 @@ class TestCluster(Cluster):
         result = super().populate(nodes, debug, tokens, use_vnodes, ipprefix, ipformat, install_byteman)
 
         for i, node in enumerate(self.nodelist()):
-            node.exporter_port = 9500 + i
+            node.exporter_address = SocketAddress(node.ip_addr, 9500 + i)
 
             if self.exporter_jar.type == ExporterJar.ExporterType.AGENT:
-                node.set_environment_variable('JVM_OPTS', f'-javaagent:{self.exporter_jar.path}=-l:{node.exporter_port}')
+                node.set_environment_variable('JVM_OPTS', f'-javaagent:{self.exporter_jar.path}=-l{node.exporter_address}')
 
             # set dc/rack manually, since CCM doesn't support custom racks
             node.set_configuration_options({
@@ -63,7 +64,8 @@ class TestCluster(Cluster):
             node.dc_idx = (int(i / nodes * racks)) + 1
 
             with open(rackdc_path, 'w') as f:
-                f.write(f'dc=dc{node.dc_idx}\nrack=rack{node.rack_idx}\n')
+                print(f'dc=dc{node.dc_idx}', file=f)
+                print(f'rack=rack{node.rack_idx}', file=f)
 
         return result
 
@@ -86,9 +88,9 @@ class TestCluster(Cluster):
 
                 process = self.exporter_jar.start_standalone(
                     logfile_path=Path(node.get_path()) / 'logs' / 'cassandra-exporter.log',
-                    listen_address=('localhost', node.exporter_port),
-                    jmx_address=('localhost', node.jmx_port),
-                    cql_address=node.network_interfaces["binary"]
+                    listen_address=node.exporter_address,
+                    jmx_address=SocketAddress('localhost', node.jmx_port),
+                    cql_address=SocketAddress(*node.network_interfaces["binary"])
                 )
 
                 self.standalone_processes.append(process)
