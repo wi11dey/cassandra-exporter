@@ -2,23 +2,32 @@ import http.client
 import json
 import platform
 import re
+import signal
+import ssl
 import subprocess
 import tarfile
 import time
 import urllib.request
 import urllib.error
-from collections import namedtuple
 from contextlib import contextmanager
-from enum import Enum, auto
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import List, NamedTuple, Optional, Union
 from urllib.parse import urlparse
 
 import appdirs
+from cryptography import x509
+from cryptography.x509.oid import NameOID
+from cryptography.hazmat.primitives import hashes
+from cryptography.hazmat.primitives.asymmetric import rsa
+from cryptography.hazmat.primitives import serialization
 import yaml
 from tqdm import tqdm
 
 import logging
+
+from utils.net import SocketAddress
+
 
 class _TqdmIOStream(object):
     def __init__(self, stream, t):
@@ -85,27 +94,6 @@ class RemotePrometheusArchive(NamedTuple):
                 return RemotePrometheusArchive(asset['browser_download_url'], )
 
 
-    # @classmethod
-    # def default_prometheus_archive_url(cls):
-    #     return cls.archive_url_for_tag('latest')
-
-    # @classmethod
-    # def add_archive_argument(cls, name, parser):
-    #     try:
-    #         default_url = PrometheusArchive.default_prometheus_archive_url()
-    #         default_help = '(default: %(default)s)'
-    #
-    #     except Exception as e:
-    #         cls.logger.warning('failed to determine Prometheus archive URL', exc_info=True)
-    #
-    #         default_url = None
-    #         default_help = f'(default: failed to determine archive URL)'
-    #
-    #     parser.add_argument(name, type=PrometheusArchive,
-    #                         help="Prometheus binary release archive (tar, tar+gz, tar+bzip2) URL (schemes: http, https, file) " + default_help,
-    #                         required=default_url is None,
-    #                         default=str(default_url))
-
     @staticmethod
     def default_download_cache_directory() -> Path:
         return Path(appdirs.user_cache_dir('cassandra-exporter-e2e')) / 'prometheus'
@@ -151,83 +139,13 @@ def archive_from_path_or_url(purl: str) -> Union[LocalPrometheusArchive, RemoteP
     return RemotePrometheusArchive(purl)
 
 
-class PrometheusInstance:
-    logger = logging.getLogger(f'{__name__}.{__qualname__}')
-
-    prometheus_directory: Path = None
-    prometheus_process: subprocess.Popen = None
-
-    def __init__(self, archive: LocalPrometheusArchive, working_directory: Path, listen_address='localhost:9090'):
-        self.prometheus_directory = archive.extract(working_directory)
-        self.listen_address = listen_address
-
-    def start(self, wait=True):
-        logfile_path = self.prometheus_directory / 'prometheus.log'
-        logfile = logfile_path.open('w')
-
-        self.logger.info('Starting Prometheus...')
-        self.prometheus_process = subprocess.Popen(
-            args=[str(self.prometheus_directory / 'prometheus'),
-                  f'--web.listen-address={self.listen_address}'],
-            cwd=str(self.prometheus_directory),
-            stdout=logfile,
-            stderr=subprocess.STDOUT
-        )
-
-        if wait:
-            self.logger.info('Waiting for Prometheus to become ready...')
-            while not self.is_ready():
-                time.sleep(1)
-
-        self.logger.info('Prometheus started successfully')
-
-    def stop(self):
-        self.logger.info('Stopping Prometheus...')
-
-        if self.prometheus_process is not None:
-            self.prometheus_process.terminate()
-
-        self.logger.info('Prometheus stopped successfully')
-
-    @contextmanager
-    def _modify_config(self):
-        config_file_path = self.prometheus_directory / 'prometheus.yml'
-
-        with config_file_path.open('r+') as stream:
-            config = yaml.safe_load(stream)
-
-            yield config
-
-            stream.seek(0)
-            yaml.safe_dump(config, stream)
-            stream.truncate()
-
-    def set_static_scrape_config(self, job_name: str, static_targets: List[str]):
-        with self._modify_config() as config:
-            config['scrape_configs'] = [{
-                'job_name': job_name,
-                'scrape_interval': '10s',
-                'static_configs': [{
-                    'targets': static_targets
-                }]
-            }]
-
-    def is_ready(self):
-        try:
-            with urllib.request.urlopen(f'http://{self.listen_address}/-/ready') as response:
-                return response.status == 200
-
-        except urllib.error.HTTPError as e:
-            return False
-
-        except urllib.error.URLError as e:
-            if isinstance(e.reason, ConnectionRefusedError):
-                return False
-
-            raise e
+class PrometheusApi:
+    def __init__(self, address: SocketAddress, ssl_context: ssl.SSLContext):
+        self.address = address
+        self.ssl_context = ssl_context
 
     def _api_call(self, path):
-        with urllib.request.urlopen(f'http://{self.listen_address}{path}') as response:
+        with urllib.request.urlopen(f'https://{self.address}{path}', context=self.ssl_context) as response:
             response_envelope = json.load(response)
 
             if response_envelope['status'] != 'success':
@@ -241,14 +159,176 @@ class PrometheusInstance:
     def query(self, q):
         return self._api_call(f'/api/v1/query?query={q}')
 
+
+class PrometheusInstance:
+    logger = logging.getLogger(f'{__name__}.{__qualname__}')
+
+    listen_address: SocketAddress
+    directory: Path = None
+    process: subprocess.Popen = None
+
+    tls_key_path: Path
+    tls_cert_path: Path
+    ssl_context: ssl.SSLContext
+
+    api: PrometheusApi
+
+    def __init__(self, archive: LocalPrometheusArchive, working_directory: Path,
+                 listen_address: SocketAddress = SocketAddress('localhost', 9090)):
+        self.directory = archive.extract(working_directory)
+        self.listen_address = listen_address
+
+        self.setup_tls()
+
+        self.api = PrometheusApi(listen_address, self.ssl_context)
+
+    def setup_tls(self):
+        private_key = rsa.generate_private_key(
+            public_exponent=65537,
+            key_size=2048
+        )
+
+        self.tls_key_path = (self.directory / 'tls_key.pem')
+        with self.tls_key_path.open('wb') as f:
+            f.write(private_key.private_bytes(
+                encoding=serialization.Encoding.PEM,
+                format=serialization.PrivateFormat.TraditionalOpenSSL,
+                encryption_algorithm=serialization.NoEncryption(),
+            ))
+
+        subject = issuer = x509.Name([
+                x509.NameAttribute(NameOID.COUNTRY_NAME, u"AU"),
+                x509.NameAttribute(NameOID.STATE_OR_PROVINCE_NAME, u"Australian Capital Territory"),
+                x509.NameAttribute(NameOID.LOCALITY_NAME, u"Canberra"),
+                x509.NameAttribute(NameOID.ORGANIZATION_NAME, u"Instaclustr Pty Ltd"),
+                x509.NameAttribute(NameOID.COMMON_NAME, u"Temporary Prometheus Server Certificate"),
+            ])
+
+        cert = x509.CertificateBuilder().subject_name(
+            subject
+        ).issuer_name(
+            issuer
+        ).public_key(
+            private_key.public_key()
+        ).serial_number(
+            x509.random_serial_number()
+        ).not_valid_before(
+            datetime.utcnow()
+        ).not_valid_after(
+            # certificate will be valid for a day
+            datetime.utcnow() + timedelta(days=1)
+        ).add_extension(
+            x509.SubjectAlternativeName([x509.DNSName(self.listen_address.host)]),
+            critical=False,
+        ).sign(private_key, hashes.SHA256())  # Sign certificate with private key
+
+        self.tls_cert_path = (self.directory / 'tls_cert.pem')
+        with self.tls_cert_path.open('wb') as f:
+            f.write(cert.public_bytes(serialization.Encoding.PEM))
+
+        self.ssl_context = ssl.SSLContext()
+        self.ssl_context.load_verify_locations(self.tls_cert_path)
+        self.ssl_context.verify_mode = ssl.VerifyMode.CERT_REQUIRED
+
+    def start(self, wait=True):
+        web_config_path = (self.directory / 'web-config.yaml')
+        with web_config_path.open('w') as f:
+            config = {
+                'tls_server_config': {
+                    'cert_file': str(self.tls_cert_path),
+                    'key_file': str(self.tls_key_path)
+                }
+            }
+
+            yaml.safe_dump(config, f)
+
+        logfile_path = self.directory / 'prometheus.log'
+        logfile = logfile_path.open('w')
+
+        self.logger.info('Starting Prometheus...')
+        self.process = subprocess.Popen(
+            args=[str(self.directory / 'prometheus'),
+                  f'--web.config.file={web_config_path}',
+                  f'--web.listen-address={self.listen_address}'],
+            cwd=str(self.directory),
+            stdout=logfile,
+            stderr=subprocess.STDOUT
+        )
+
+        if wait:
+            self.wait_ready()
+
+        self.logger.info('Prometheus started successfully')
+
+    def stop(self):
+        self.logger.info('Stopping Prometheus...')
+
+        if self.process is not None:
+            self.process.terminate()
+
+        self.logger.info('Prometheus stopped successfully')
+
+    def wait_ready(self):
+        self.logger.info('Waiting for Prometheus to become ready...')
+        while not self.is_ready():
+            rc = self.process.poll()
+            if rc is not None:
+                raise Exception(f'Prometheus process {self.process.pid} exited unexpectedly with rc {rc} while waiting for ready state!')
+
+            time.sleep(1)
+
+    @contextmanager
+    def _modify_config(self):
+        config_file_path = self.directory / 'prometheus.yml'
+
+        with config_file_path.open('r+') as stream:
+            config = yaml.safe_load(stream)
+
+            yield config
+
+            stream.seek(0)
+            stream.truncate()
+
+            yaml.safe_dump(config, stream)
+
+        if self.process is not None:
+            self.process.send_signal(signal.SIGHUP)
+            self.wait_ready()
+
+    def set_static_scrape_config(self, job_name: str, static_targets: List[Union[str, SocketAddress]]):
+        with self._modify_config() as config:
+            config['scrape_configs'] = [{
+                'job_name': job_name,
+                'scrape_interval': '10s',
+                'static_configs': [{
+                    'targets': [str(t) for t in static_targets]
+                }]
+            }]
+
+    def is_ready(self):
+        try:
+            with urllib.request.urlopen(f'https://{self.listen_address}/-/ready', context=self.ssl_context) as response:
+                return response.status == 200
+
+        except urllib.error.HTTPError as e:
+            self.logger.debug('HTTP error while checking for ready state: %s', e)
+            return False
+
+        except urllib.error.URLError as e:
+            self.logger.debug('urllib error while checking for ready state: %s', e)
+            if isinstance(e.reason, ConnectionRefusedError):
+                return False
+
+            if isinstance(e.reason, ssl.SSLError):
+                self.logger.warning('SSL/TLS errors may mean that an instance of Prometheus (or some other server) is already listening on %s. Check the port.', self.listen_address)
+
+            raise e
+
     def __enter__(self):
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.stop()
 
-        if self.prometheus_process is not None:
-            self.prometheus_process.__exit__(exc_type, exc_val, exc_tb)
-
-
-
+        if self.process is not None:
+            self.process.__exit__(exc_type, exc_val, exc_tb)

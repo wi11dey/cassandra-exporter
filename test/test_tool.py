@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 import tarfile
+import time
 import typing as t
 from contextlib import contextmanager
 import shutil
@@ -59,10 +60,6 @@ def fixup_kwargs(*skip: str):
             continue
 
         kwargs[a] = v
-
-    #kwargs.update(overrides)
-
-    pass
 
 
 def with_working_directory():
@@ -221,7 +218,7 @@ def with_prometheus():
             cloup.option('--prometheus-archive', metavar='PATH/URL'),
             constraint=cloup.constraints.mutually_exclusive
         )
-        #@click.option('--prometheus-version', 'prometheus_version', default='test-cluster', show_default=True)
+
         @click.pass_context
         @wraps(func)
         def wrapper(ctx: click.Context,
@@ -353,27 +350,29 @@ def e2e(ccm_cluster: TestCluster, prometheus: PrometheusInstance, **kwargs):
 
     input("Press any key to stop cluster...")
 
-    # while True:
-    #     targets = prometheus.get_targets()
-    #
-    #     if len(targets['activeTargets']) > 0:
-    #         for target in targets['activeTargets']:
-    #             labels = frozendict(target['labels'])
-    #
-    #             # even if the target health is unknown, ensure the key exists so the length check below
-    #             # is aware of the target
-    #             history = target_histories[labels]
-    #
-    #             if target['health'] == 'unknown':
-    #                 continue
-    #
-    #             history[target['lastScrape']] = (target['health'], target['lastError'])
-    #
-    #         if all([len(v) >= 5 for v in target_histories.values()]):
-    #             break
-    #
-    #     time.sleep(1)
-    #
+    while True:
+        targets = prometheus.api.get_targets()
+
+        pass
+
+        # if len(targets['activeTargets']) > 0:
+        #     for target in targets['activeTargets']:
+        #         labels = frozendict(target['labels'])
+        #
+        #         # even if the target health is unknown, ensure the key exists so the length check below
+        #         # is aware of the target
+        #         history = target_histories[labels]
+        #
+        #         if target['health'] == 'unknown':
+        #             continue
+        #
+        #         history[target['lastScrape']] = (target['health'], target['lastError'])
+        #
+        #     if all([len(v) >= 5 for v in target_histories.values()]):
+        #         break
+
+        time.sleep(1)
+
     # unhealthy_targets = dict((target, history) for target, history in target_histories.items()
     #                          if any([health != 'up' for (health, error) in history.values()]))
     #
