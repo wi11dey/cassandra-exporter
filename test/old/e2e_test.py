@@ -19,34 +19,17 @@ from pathlib import Path
 
 from frozendict import frozendict
 
-from utils.ccm import TestCluster
-from utils.jar_utils import ExporterJar
-from utils.path_utils import nonexistent_or_empty_directory_arg
-from utils.prometheus import PrometheusInstance, PrometheusArchive
-from utils.schema import CqlSchema
+from lib.ccm import TestCluster
+from lib.jar_utils import ExporterJar
+from lib.path_utils import nonexistent_or_empty_directory_arg
+from lib.prometheus import PrometheusInstance, RemotePrometheusArchive
+from lib.schema import CqlSchema
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
 
 
-class TestMetricsHTTPHandler(http.server.BaseHTTPRequestHandler):
-    """A test HTTP endpoint for Prometheus to scrape."""
 
-    def do_GET(self):
-        if self.path != '/metrics':
-            self.send_error(404)
-
-        self.send_response(200)
-        self.end_headers()
-
-        # if self.server.server_port == 9500:
-        if random.choice([True, False]):
-            self.wfile.write(b'# TYPE test_family gauge\n'
-                             b'test_family 123\n')
-
-        else:
-            self.wfile.write(b'# TYPE test_family gauge\n'
-                             b'test_family123\n')
 
 
 if __name__ == '__main__':
@@ -66,18 +49,17 @@ if __name__ == '__main__':
                         default=3)
 
     ExporterJar.add_jar_argument('--exporter-jar', parser)
-    CqlSchema.add_schema_argument('--schema', parser)
-    PrometheusArchive.add_archive_argument('--prometheus-archive', parser)
+    CqlSchema.add_schema_argument('--'
+                                  'schema', parser)
+    RemotePrometheusArchive.add_archive_argument('--prometheus-archive', parser)
 
     args = parser.parse_args()
 
     if args.working_directory is None:
         args.working_directory = Path(tempfile.mkdtemp())
 
-
     def delete_working_dir():
         shutil.rmtree(args.working_directory)
-
 
     with contextlib.ExitStack() as defer:
         if not args.keep_working_directory:
@@ -104,8 +86,8 @@ if __name__ == '__main__':
         # httpd = http.server.HTTPServer(("", 9501), DummyPrometheusHTTPHandler)
         # threading.Thread(target=httpd.serve_forever, daemon=True).start()
 
-        prometheus.set_scrape_config('cassandra',
-                                     list(map(lambda n: f'localhost:{n.exporter_port}', ccm_cluster.nodelist())))
+        prometheus.set_static_scrape_config('cassandra',
+                                            list(map(lambda n: f'localhost:{n.exporter_port}', ccm_cluster.nodelist())))
         # prometheus.set_scrape_config('cassandra', ['localhost:9500', 'localhost:9501'])
         prometheus.start()
 

@@ -17,8 +17,8 @@ from typing import Dict
 
 from frozendict import frozendict
 
-from utils.net import SocketAddress
-from utils.prometheus import PrometheusInstance, RemotePrometheusArchive
+from lib.net import SocketAddress
+from lib.prometheus import PrometheusInstance, RemotePrometheusArchive
 
 
 logging.basicConfig(level=logging.DEBUG)
@@ -143,6 +143,10 @@ class TestMetricsHandlerTest(unittest.TestCase):
 
 class ConcurrentPrometheusInstancesTest(unittest.TestCase):
     def test_concurrent_instances(self):
+        """verify that trying to start a 2nd copy of prometheus fails.
+            prometheus
+            this is handled by creating a unique server tls cert for each instance and requiring a valid cert on connections.
+            if the api client connects to the wrong instance cert verification will fail and  """
         cm = contextlib.ExitStack()  # TODO: clean this up
 
         work_dir1 = Path(cm.enter_context(tempfile.TemporaryDirectory()))  # TODO:  make these delete only if no exception occured
@@ -158,6 +162,5 @@ class ConcurrentPrometheusInstancesTest(unittest.TestCase):
             prometheus2.start()
 
 
+        cm.close()
 
-
-pass

@@ -7,15 +7,20 @@ import ssl
 import subprocess
 import tarfile
 import time
+import typing as t
 import urllib.request
 import urllib.error
 from contextlib import contextmanager
 from datetime import datetime, timedelta
+from functools import wraps
+from io import TextIOWrapper
 from pathlib import Path
-from typing import List, NamedTuple, Optional, Union
+from typing import List, NamedTuple, Optional, Union, TextIO
 from urllib.parse import urlparse
 
 import appdirs
+import click
+import cloup
 from cryptography import x509
 from cryptography.x509.oid import NameOID
 from cryptography.hazmat.primitives import hashes
@@ -26,7 +31,10 @@ from tqdm import tqdm
 
 import logging
 
-from utils.net import SocketAddress
+from lib.ccm import TestCluster
+from lib.click_helpers import fixup_kwargs
+
+from lib.net import SocketAddress
 
 
 class _TqdmIOStream(object):
@@ -165,7 +173,9 @@ class PrometheusInstance:
 
     listen_address: SocketAddress
     directory: Path = None
+
     process: subprocess.Popen = None
+    log_file: TextIO
 
     tls_key_path: Path
     tls_cert_path: Path
@@ -215,7 +225,6 @@ class PrometheusInstance:
         ).not_valid_before(
             datetime.utcnow()
         ).not_valid_after(
-            # certificate will be valid for a day
             datetime.utcnow() + timedelta(days=1)
         ).add_extension(
             x509.SubjectAlternativeName([x509.DNSName(self.listen_address.host)]),
@@ -242,8 +251,7 @@ class PrometheusInstance:
 
             yaml.safe_dump(config, f)
 
-        logfile_path = self.directory / 'prometheus.log'
-        logfile = logfile_path.open('w')
+        self.log_file = (self.directory / 'prometheus.log').open('w')
 
         self.logger.info('Starting Prometheus...')
         self.process = subprocess.Popen(
@@ -251,7 +259,7 @@ class PrometheusInstance:
                   f'--web.config.file={web_config_path}',
                   f'--web.listen-address={self.listen_address}'],
             cwd=str(self.directory),
-            stdout=logfile,
+            stdout=self.log_file,
             stderr=subprocess.STDOUT
         )
 
@@ -332,3 +340,54 @@ class PrometheusInstance:
 
         if self.process is not None:
             self.process.__exit__(exc_type, exc_val, exc_tb)
+
+        if self.log_file is not None:
+            self.log_file.close()
+
+
+def with_prometheus():
+    def decorator(func: t.Callable) -> t.Callable:
+        @cloup.option_group(
+            "Prometheus Archive",
+            cloup.option('--prometheus-version', metavar='TAG'),
+            cloup.option('--prometheus-archive', metavar='PATH/URL'),
+            constraint=cloup.constraints.mutually_exclusive
+        )
+        @click.pass_context
+        @wraps(func)
+        def wrapper(ctx: click.Context,
+                    prometheus_version: str,
+                    prometheus_archive: str,
+                    working_directory: Path,
+                    ccm_cluster: t.Optional[TestCluster] = None,
+                    **kwargs):
+
+            if prometheus_version is None and prometheus_archive is None:
+                prometheus_version = 'latest'
+
+            if prometheus_version is not None:
+                archive = RemotePrometheusArchive.for_tag(prometheus_version)
+
+            else:
+                archive = archive_from_path_or_url(prometheus_archive)
+
+            if isinstance(archive, RemotePrometheusArchive):
+                archive = archive.download()
+
+            prometheus = ctx.with_resource(PrometheusInstance(
+                archive=archive,
+                working_directory=working_directory
+            ))
+
+            if ccm_cluster:
+                prometheus.set_static_scrape_config('cassandra',
+                                                    [str(n.exporter_address) for n in ccm_cluster.nodelist()]
+                                                    )
+
+            fixup_kwargs()
+
+            func(prometheus=prometheus, **kwargs)
+
+        return wrapper
+
+    return decorator

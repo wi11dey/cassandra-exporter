@@ -8,7 +8,7 @@ from pathlib import Path
 from ccmlib.cluster import Cluster
 from ccmlib.cluster_factory import ClusterFactory
 
-from utils.jar_utils import ExporterJar
+from lib.jar_utils import ExporterJar
 
 
 def create_ccm_cluster(cluster_directory: Path, cassandra_version: str, node_count: int):

@@ -8,9 +8,9 @@ import tempfile
 import urllib.request
 from pathlib import Path
 
-from utils.ccm import TestCluster
-from utils.jar_utils import ExporterJar
-from utils.schema import CqlSchema
+from lib.ccm import TestCluster
+from lib.jar_utils import ExporterJar
+from lib.schema import CqlSchema
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)

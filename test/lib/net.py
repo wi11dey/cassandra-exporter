@@ -7,7 +7,3 @@ class SocketAddress(typing.NamedTuple):
 
     def __str__(self) -> str:
         return f'{self.host}:{self.port}'
-
-
-# def addr_str(address: (str, int)):
-#     return ':'.join(map(str, address))

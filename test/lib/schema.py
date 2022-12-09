@@ -2,11 +2,13 @@ import argparse
 from dataclasses import dataclass
 from os import PathLike
 import typing as t
+
+import click
 import yaml
 from pathlib import Path
 from collections import namedtuple
 
-from utils.path_utils import existing_file_arg
+from lib.path_utils import existing_file_arg
 
 @dataclass
 class CqlSchema:
@@ -34,3 +36,16 @@ class CqlSchema:
         test_dir = Path(__file__).parents[1]
         return test_dir / "schema.yaml"
 
+
+class CqlSchemaParamType(click.ParamType):
+    name = "path"
+
+    def convert(self, value: t.Any, param: t.Optional[click.Parameter], ctx: t.Optional[click.Context]) -> CqlSchema:
+        if isinstance(value, CqlSchema):
+            return value
+
+        try:
+            return CqlSchema.from_path(value)
+
+        except Exception as e:
+            self.fail(str(e), param, ctx)

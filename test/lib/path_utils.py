@@ -1,4 +1,3 @@
-import argparse
 from os import PathLike
 from pathlib import Path
 
@@ -6,10 +5,10 @@ from pathlib import Path
 def existing_file_arg(path: PathLike):
     path = Path(path)
     if not path.exists():
-        raise ValueError(f'file "{path}" does not exist.')
+        raise ValueError(f'{path}: file does not exist.')
 
     if not path.is_file():
-        raise ValueError(f'"{path}" is not a regular file.')
+        raise ValueError(f'{path}: not a regular file.')
 
     return path
 

@@ -16,11 +16,11 @@ from pathlib import Path
 import yaml
 from frozendict import frozendict
 
-from utils.ccm import TestCluster
-from utils.jar_utils import ExporterJar
-from utils.path_utils import nonexistent_or_empty_directory_arg
-from utils.prometheus import PrometheusInstance, PrometheusArchive
-from utils.schema import CqlSchema
+from lib.ccm import TestCluster
+from lib.jar_utils import ExporterJar
+from lib.path_utils import nonexistent_or_empty_directory_arg
+from lib.prometheus import PrometheusInstance, RemotePrometheusArchive
+from lib.schema import CqlSchema
 
 logging.basicConfig(level=logging.DEBUG)
 logger = logging.getLogger(__name__)
@@ -44,7 +44,7 @@ if __name__ == '__main__':
 
     ExporterJar.add_jar_argument('--exporter-jar', parser)
     CqlSchema.add_schema_argument('--schema', parser)
-    PrometheusArchive.add_archive_argument('--prometheus-archive', parser)
+    RemotePrometheusArchive.add_archive_argument('--prometheus-archive', parser)
 
     args = parser.parse_args()
 

@@ -1,4 +1,3 @@
-import argparse
 from dataclasses import dataclass
 import logging
 import re
@@ -10,8 +9,10 @@ from os import PathLike
 from pathlib import Path
 from xml.etree import ElementTree
 
-from utils.net import SocketAddress
-from utils.path_utils import existing_file_arg
+import click
+
+from lib.net import SocketAddress
+from lib.path_utils import existing_file_arg
 
 @dataclass
 class ExporterJar:
@@ -71,7 +72,7 @@ class ExporterJar:
 
         self.logger.info('Standalone log file: %s', logfile_path)
 
-        logfile = logfile_path.open('w')
+        logfile = logfile_path.open('w')  # TODO: cleanup
 
         command = ['java',
                    '-jar', self.path,
@@ -84,3 +85,22 @@ class ExporterJar:
         self.logger.debug('Standalone exec(%s)', ' '.join(command))
 
         return subprocess.Popen(command, stdout=logfile, stderr=subprocess.STDOUT)
+
+
+class ExporterJarParamType(click.ParamType):
+    name = "path"
+
+    def convert(self, value: t.Any, param: t.Optional[click.Parameter], ctx: t.Optional[click.Context]) -> ExporterJar:
+        if isinstance(value, ExporterJar):
+            return value
+
+        try:
+            if isinstance(value, str):
+                for t in ExporterJar.ExporterType:
+                    if t.name.lower() == value.lower():
+                        return ExporterJar.from_path(ExporterJar.default_jar_path(t))
+
+            return ExporterJar.from_path(value)
+
+        except Exception as e:
+            self.fail(str(e), param, ctx)
