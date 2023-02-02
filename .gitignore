@@ -11,4 +11,6 @@ dependency-reduced-pom.xml
 release.properties
 
 *.srl
-
+test/build
+*.egg-info
+__pycache__

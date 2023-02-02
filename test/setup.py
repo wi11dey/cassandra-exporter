@@ -6,6 +6,8 @@ setup(
     description='End-to-end testing tools for cassandra-exporter',
     author='Adam Zegelin',
     author_email='adam@instaclustr.com',
-    packages=['cassandra-exporter-e2e-tests'],
-    install_requires=['ccm', 'prometheus_client', 'cassandra-driver', 'frozendict', 'pyyaml', 'tqdm'],
+    packages=['lib', 'tools'],
+    install_requires=['ccm', 'prometheus_client',
+                      'cassandra-driver', 'frozendict', 'pyyaml', 'tqdm', 'click',
+                      'cloup', 'appdirs', 'cryptography'],
 )
