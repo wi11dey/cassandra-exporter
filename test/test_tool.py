@@ -36,7 +36,7 @@ def run_demo_cluster(ccm_cluster: TestCluster, **kwargs):
     ccm_cluster.start()
 
     for node in ccm_cluster.nodelist():
-        logger.info('Node %s cassandra-exporter running on http://%s', node.name, node.network_interfaces['exporter'])
+        logger.info('Node %s cassandra-exporter running on http://%s', node.name, node.exporter_address)
 
     sys.stderr.flush()
     sys.stdout.flush()
