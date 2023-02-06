@@ -19,13 +19,4 @@
 
     PRIMARY KEY ((family, labels, bucket), time)
   )
-- >
-  CREATE MATERIALIZED VIEW example.numeric_metric_labels AS
-    SELECT family, labels, bucket, time
-    FROM example.numeric_metrics
-    WHERE family IS NOT NULL AND
-      labels IS NOT NULL AND
-      bucket IS NOT NULL AND
-      time IS NOT NULL
-  PRIMARY KEY (family, labels, bucket, time)
 

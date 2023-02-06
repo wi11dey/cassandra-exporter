@@ -153,7 +153,7 @@ def with_ccm_cluster():
             "Cassandra",
             cloup.option('--cluster-name', 'cassandra_cluster_name', default='test-cluster', show_default=True,
                          help='name of the Cassandra cluster'),
-            cloup.option('--cassandra-version', default='3.11.14', show_default=True,
+            cloup.option('--cassandra-version', default='4.1.0', show_default=True,
                          help='Cassandra version to run'),
             cloup.option('--topology', 'cassandra_topology',
                          type=(int, int, int), default=(2, 3, 1), show_default=True,
@@ -176,6 +176,7 @@ def with_ccm_cluster():
             datacenters, racks, nodes, = cassandra_topology
 
             logger.info('Creating Cassandra %s cluster, with:', cassandra_version)
+            logger.info('   CCM working directory %s:', working_directory)
             logger.info('   Topology: %s data center(s), %s rack(s) per DC, %s node(s) per rack (%s node(s) total)', datacenters, racks, nodes, (nodes * racks * datacenters))
             logger.info('   cassandra-exporter: %s', exporter_jar)
 
