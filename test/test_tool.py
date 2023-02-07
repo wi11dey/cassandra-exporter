@@ -68,7 +68,7 @@ def e2e(ccm_cluster: TestCluster, prometheus: PrometheusInstance, **kwargs):
     for node in ccm_cluster.nodelist():
         logger.info('Node %s cassandra-exporter running on http://%s', node.name, node.exporter_address)
 
-    logger.info("Prometheus running on: http://%s", prometheus.listen_address)
+    logger.info("Prometheus running on: https://%s", prometheus.listen_address)
 
     input("Press any key to stop cluster...")
 
