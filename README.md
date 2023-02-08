@@ -419,6 +419,7 @@ There are unit tests in the various projects which will get executed with the ma
 ### Integration test harness
 
 There is an integration test harness available in the */test/* folder.
+This harness is a work in progress, and is currently only useful for manual verification.
 
 #### Requirements
 
