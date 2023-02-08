@@ -33,13 +33,17 @@ For example, the following PromQL query will return an estimate of the number of
 
 ## Compatibility
 
-*cassandra-exporter* is has been tested with:
+*cassandra-exporter* is now Cassandra 4.0+ compatible, but the change is not a backwards compatible. Support for older Cassandra versions is via the older releases, as follows:
 
-| Component       | Version       |
+| Cassandra Version | Compatible Exporter Version |
 |-----------------|---------------|
-| Apache Cassandra| 3.0.17 (experimental), 3.11.2, 3.11.3        |
-| Prometheus      | 2.0 and later |
+| Apache Cassandra 4.x  | 0.9.12 |
+| Apache Cassandra 3.0.17, 3.11.2, 3.11.3 | 0.9.11 |
 
+| Prometheus Version |
+|-----------------|
+| 2.42.0 
+|
 Other Cassandra and Prometheus versions will be tested for compatibility in the future.
 
 ## Usage
@@ -406,6 +410,136 @@ See the [Exported Metrics](https://github.com/instaclustr/cassandra-exporter/wik
 We suggest viewing the metrics endpoint (e.g., <http://localhost:9500/metrics>) in a browser to get an understanding of what metrics
 are exported by your Cassandra node.
 
+
+## Testing
+
+### Java
+There are unit tests in the various projects which will get executed with the maven commands.
+
+### Integration test harness
+
+There is an integration test harness available in the */test/* folder.
+
+#### Requirements
+
+The test harness uses Python (tested with 3.10).
+
+Initialise the project by using the pyproject.toml file
+
+    pip install .
+
+The tool can be launched via
+
+    python test_tool.py
+
+#### Operation
+
+There are four modes of operation:
+
+- `benchmark`
+
+    Not Implemented - TBA - Intended to test the speed of collection.
+
+- `demo`
+
+      Usage: test_tool.py demo [OPTIONS]
+
+        Start a Cassandra cluster with cassandra-exporter installed (agent or
+        standalone). Optionally setup a schema. Wait for ctrl-c to shut everything
+        down.
+
+        Working Directory:
+          -C, --working-directory PATH  location to install Cassandra and/or Prometheus.
+                                        Must be empty or not exist. Defaults to a
+                                        temporary directory.
+          --cleanup-working-directory [on-error|always|never]
+                                        how to delete the working directory on exit:
+                                        "on-error": delete working directory on exit
+                                        unless an error occurs, "always": always delete
+                                        working directory on exit, "never": never delete
+                                        working directory.  [default: on-error]
+
+        Cassandra:
+          --cluster-name TEXT           name of the Cassandra cluster  [default: test-
+                                        cluster]
+          --cassandra-version TEXT      Cassandra version to run  [default: 4.1.0]
+          --topology DCS RACKS NODES    number of data centers, racks per data center,
+                                        and nodes per rack.  [default: 2, 3, 1]
+          -j, --exporter-jar PATH       path of the cassandra-exporter jar to use,
+                                        either agent or standalone builds, or one of
+                                        "agent" or "standalone" for the currently built
+                                        jar of that type in the project directory
+                                        (assumes that the sources for this test tool are
+                                        in the standard location within the project, and
+                                        that the jar(s) have been built).  [default:
+                                        agent]
+          -s, --schema PATH             path of the CQL schema YAML file to apply on
+                                        cluster start. The YAML file must contain a list
+                                        of CQL statement strings, which are applied in
+                                        order.  [default: /root/source/forks/cassandra-
+                                        exporter/test/schema.yaml]
+
+- `dump`
+
+      Usage: test_tool.py dump [OPTIONS] COMMAND [ARGS]...
+
+        Commands to capture, validate and diff metrics dumps
+
+        Options:
+          --help  Show this message and exit.
+
+        Commands:
+          capture   Start a Cassandra cluster, capture metrics from each node's...
+          diff      Compare two metrics dumps and output the difference
+          validate  Validate a metrics dump using Prometheus's promtool.
+
+- `e2e` - *Note no tests are run at the moment*
+
+      Usage: test_tool.py e2e [OPTIONS]
+
+        Run cassandra-exporter end-to-end tests.
+
+        - Start C* with the exporter JAR (agent or standalone). 
+        - Setup a schema. 
+        - Configure and start prometheus. 
+        - Wait for all scrape targets to get healthy.
+        - Run some tests.
+
+      Working Directory:
+        -C, --working-directory PATH   location to install Cassandra and/or
+                                      Prometheus. Must be empty or not exist.
+                                      Defaults to a temporary directory.
+        --cleanup-working-directory [on-error|always|never]
+                                      how to delete the working directory on exit:
+                                      "on-error": delete working directory on exit
+                                      unless an error occurs, "always": always delete
+                                      working directory on exit, "never": never
+                                      delete working directory.  [default: on-error]
+
+      Cassandra:
+        --cluster-name TEXT            name of the Cassandra cluster  [default: test-
+                                      cluster]
+        --cassandra-version TEXT       Cassandra version to run  [default: 4.1.0]
+        --topology DCS RACKS NODES     number of data centers, racks per data center,
+                                      and nodes per rack.  [default: 2, 3, 1]
+        -j, --exporter-jar PATH        path of the cassandra-exporter jar to use,
+                                      either agent or standalone builds, or one of
+                                      "agent" or "standalone" for the currently built
+                                      jar of that type in the project directory
+                                      (assumes that the sources for this test tool
+                                      are in the standard location within the
+                                      project, and that the jar(s) have been built).
+                                      [default: agent]
+        -s, --schema PATH              path of the CQL schema YAML file to apply on
+                                      cluster start. The YAML file must contain a
+                                      list of CQL statement strings, which are
+                                      applied in order.  [default:
+                                      /root/source/forks/cassandra-
+                                      exporter/test/schema.yaml]
+
+      Prometheus Archive: [mutually exclusive]
+        --prometheus-version TAG
+        --prometheus-archive PATH/URL
 
 ## Unstable, Missing & Future Features
 
