@@ -1,0 +1,7 @@
+[build-system]
+requires = ["setuptools", "setuptools-scm"]
+
+[project]
+name = "cassandra-exporter"
+requires-python = ">=3.8"
+dynamic = ["version", "description", "authors", "dependencies"]
