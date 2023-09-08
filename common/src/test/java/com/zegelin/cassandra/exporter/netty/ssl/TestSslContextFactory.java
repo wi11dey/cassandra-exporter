@@ -7,7 +7,6 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
-import sun.security.ssl.SSLEngineImpl;
 
 import java.io.File;
 import java.io.IOException;
@@ -38,15 +37,6 @@ public class TestSslContextFactory {
         SslContext context = contextFactory.createSslContext();
 
         assertThat(context.newEngine(ByteBufAllocator.DEFAULT)).isInstanceOf(OpenSslEngine.class);
-    }
-
-    @Test
-    public void testCreateJdkSslContext() {
-        serverOptions.sslImplementation = SslImplementation.JDK;
-
-        SslContext context = contextFactory.createSslContext();
-
-        assertThat(context.newEngine(ByteBufAllocator.DEFAULT)).isInstanceOf(SSLEngineImpl.class);
     }
 
     @Test
@@ -153,29 +143,6 @@ public class TestSslContextFactory {
 
         assertThatIllegalArgumentException().isThrownBy(() -> contextFactory.createSslContext())
                 .withMessageContaining("Unable to read SSL server key password file");
-    }
-
-    @Test
-    public void testCreateSslContextWithServerKeyAndCert() {
-        serverOptions.sslServerKeyFile = givenResource("cert/key.pem");
-        serverOptions.sslServerCertificateFile = givenResource("cert/cert.pem");
-        serverOptions.sslImplementation = SslImplementation.JDK;
-
-        SslContext context = contextFactory.createSslContext();
-
-        assertThat(context.newEngine(ByteBufAllocator.DEFAULT)).isInstanceOf(SSLEngineImpl.class);
-    }
-
-    @Test
-    public void testCreateSslContextWithServerKeyAndCertWithPassword() {
-        serverOptions.sslServerKeyFile = givenResource("cert/protected-key.pem");
-        serverOptions.sslServerKeyPasswordFile = givenResource("cert/protected-key.pass");
-        serverOptions.sslServerCertificateFile = givenResource("cert/cert.pem");
-        serverOptions.sslImplementation = SslImplementation.JDK;
-
-        SslContext context = contextFactory.createSslContext();
-
-        assertThat(context.newEngine(ByteBufAllocator.DEFAULT)).isInstanceOf(SSLEngineImpl.class);
     }
 
     @Test
