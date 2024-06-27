@@ -7,7 +7,6 @@ import io.netty.handler.ssl.SslContext;
 import io.netty.handler.ssl.util.SelfSignedCertificate;
 import org.testng.annotations.BeforeMethod;
 import org.testng.annotations.Test;
-import sun.security.ssl.SSLEngineImpl;
 
 import java.io.File;
 import java.io.IOException;
@@ -46,7 +45,7 @@ public class TestSslContextFactory {
 
         SslContext context = contextFactory.createSslContext();
 
-        assertThat(context.newEngine(ByteBufAllocator.DEFAULT)).isInstanceOf(SSLEngineImpl.class);
+        assertThat(context.newEngine(ByteBufAllocator.DEFAULT).getClass().getSimpleName()).isEqualTo("SSLEngineImpl");
     }
 
     @Test
@@ -163,7 +162,7 @@ public class TestSslContextFactory {
 
         SslContext context = contextFactory.createSslContext();
 
-        assertThat(context.newEngine(ByteBufAllocator.DEFAULT)).isInstanceOf(SSLEngineImpl.class);
+        assertThat(context.newEngine(ByteBufAllocator.DEFAULT).getClass().getSimpleName()).isEqualTo("SSLEngineImpl");
     }
 
     @Test
@@ -175,7 +174,7 @@ public class TestSslContextFactory {
 
         SslContext context = contextFactory.createSslContext();
 
-        assertThat(context.newEngine(ByteBufAllocator.DEFAULT)).isInstanceOf(SSLEngineImpl.class);
+        assertThat(context.newEngine(ByteBufAllocator.DEFAULT).getClass().getSimpleName()).isEqualTo("SSLEngineImpl");
     }
 
     @Test
