@@ -1,8 +1,7 @@
 package com.zegelin.cassandra.exporter;
 
-import com.zegelin.cassandra.exporter.MetadataFactory;
 import org.apache.cassandra.config.DatabaseDescriptor;
-import org.apache.cassandra.gms.Gossiper;
+import org.apache.cassandra.cql3.statements.schema.IndexTarget;
 import org.apache.cassandra.locator.IEndpointSnitch;
 import org.apache.cassandra.locator.InetAddressAndPort;
 import org.apache.cassandra.utils.FBUtilities;
@@ -13,6 +12,7 @@ import java.util.Optional;
 import java.util.Set;
 
 public class InternalMetadataFactory extends MetadataFactory {
+
     private static Optional<org.apache.cassandra.schema.TableMetadata> getTableMetaData(final String keyspaceName, final String tableName) {
         return Optional.ofNullable(Schema.instance.getTableMetadata(keyspaceName, tableName));
     }
@@ -24,11 +24,10 @@ public class InternalMetadataFactory extends MetadataFactory {
     @Override
     public Optional<IndexMetadata> indexMetadata(final String keyspaceName, final String tableName, final String indexName) {
         return getIndexMetadata(keyspaceName, indexName)
-                .flatMap(m -> m.get().indexName())
-                .map(m -> {
-                    final IndexMetadata.IndexType indexType = IndexMetadata.IndexType.valueOf(m);
-                    final Optional<String> className = Optional.ofNullable(m);
-
+                .flatMap(tableMetadata -> tableMetadata.get().indexes.get(indexName))
+                .map(indexMetadata -> {
+                    final IndexMetadata.IndexType indexType = IndexMetadata.IndexType.valueOf(indexMetadata.kind.name());
+                    final Optional<String> className = Optional.ofNullable(indexMetadata.options.get(IndexTarget.CUSTOM_INDEX_OPTION_NAME));
                     return new IndexMetadata() {
                         @Override
                         public IndexType indexType() {
