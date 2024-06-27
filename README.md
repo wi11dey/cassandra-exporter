@@ -37,10 +37,11 @@ For example, the following PromQL query will return an estimate of the number of
 
 *cassandra-exporter* is now Cassandra 4.0+ compatible, but the change is not a backwards compatible. Support for older Cassandra versions is via the older releases, as follows:
 
-| Cassandra Version | Compatible Exporter Version |
-|-----------------|---------------|
-| Apache Cassandra 4.x  | 0.9.12 |
-| Apache Cassandra 3.0.17, 3.11.2, 3.11.3 | 0.9.11 |
+| Cassandra Version                       | Compatible Exporter Version |
+|-----------------------------------------|-----------------------------|
+| Apache Cassandra 4.0 up to 4.1.3        | 0.9.13                      |
+| Apache Cassandra 4.0 up to 4.1.3        | 0.9.12                      |
+| Apache Cassandra 3.0.17, 3.11.2, 3.11.3 | 0.9.11                      |
 
 | Prometheus Version |
 |-----------------|
