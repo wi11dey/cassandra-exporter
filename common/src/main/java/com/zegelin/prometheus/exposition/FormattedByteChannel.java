@@ -5,7 +5,7 @@ import java.nio.channels.ReadableByteChannel;
 
 public class FormattedByteChannel implements ReadableByteChannel {
     public static final int MIN_CHUNK_SIZE = 1024 * 1024;
-    public static final int MAX_CHUNK_SIZE = MIN_CHUNK_SIZE * 5;
+    public static final int MAX_CHUNK_SIZE = MIN_CHUNK_SIZE * 50;
 
     private final FormattedExposition formattedExposition;
 
