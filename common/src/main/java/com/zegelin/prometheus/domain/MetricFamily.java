@@ -1,7 +1,5 @@
 package com.zegelin.prometheus.domain;
 
-import com.google.common.base.MoreObjects;
-
 import java.util.Objects;
 import java.util.function.Supplier;
 import java.util.stream.Stream;
@@ -41,7 +39,7 @@ public abstract class MetricFamily<T extends Metric> {
 
     @Override
     public String toString() {
-        return MoreObjects.toStringHelper(this)
+        return com.google.common.base.Objects.toStringHelper(this)
                 .add("name", name)
                 .add("help", help)
                 .toString();

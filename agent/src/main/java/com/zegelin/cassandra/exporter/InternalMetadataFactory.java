@@ -11,6 +11,7 @@ import org.apache.cassandra.utils.FBUtilities;
 import java.net.InetAddress;
 import java.util.Optional;
 import java.util.Set;
+import java.util.stream.Stream;
 
 public class InternalMetadataFactory extends MetadataFactory {
     private static Optional<CFMetaData> getCFMetaData(final String keyspaceName, final String tableName) {
@@ -20,10 +21,13 @@ public class InternalMetadataFactory extends MetadataFactory {
     @Override
     public Optional<IndexMetadata> indexMetadata(final String keyspaceName, final String tableName, final String indexName) {
         return getCFMetaData(keyspaceName, tableName)
-                .flatMap(m -> m.getIndexes().get(indexName))
-                .map(m -> {
-                    final IndexMetadata.IndexType indexType = IndexMetadata.IndexType.valueOf(m.kind.toString());
-                    final Optional<String> className = Optional.ofNullable(m.options.get("class_name"));
+                .map(Stream::of)
+                .orElseGet(Stream::empty)
+                .flatMap(m -> m.allColumns().stream())
+                .filter(m -> indexName.equals(m.getIndexName()))
+                .<IndexMetadata>map(m -> {
+                    final IndexMetadata.IndexType indexType = IndexMetadata.IndexType.valueOf(m.getIndexType().toString());
+                    final Optional<String> className = Optional.ofNullable(m.getIndexOptions().get("class_name"));
 
                     return new IndexMetadata() {
                         @Override
@@ -36,7 +40,8 @@ public class InternalMetadataFactory extends MetadataFactory {
                             return className;
                         }
                     };
-                });
+                })
+                .findAny();
     }
 
     @Override
@@ -45,12 +50,12 @@ public class InternalMetadataFactory extends MetadataFactory {
                 .map(m -> new TableMetadata() {
                     @Override
                     public String compactionStrategyClassName() {
-                        return m.params.compaction.klass().getCanonicalName();
+                        return m.compactionStrategyClass.getCanonicalName();
                     }
 
                     @Override
                     public boolean isView() {
-                        return m.isView();
+                        return false;
                     }
                 });
     }
